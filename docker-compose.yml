@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  jpstock-agent:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - JPSTOCK_MCP_TRANSPORT=sse
+      - JPSTOCK_MCP_HOST=0.0.0.0
+      - JPSTOCK_MCP_PORT=8000
+      - JPSTOCK_DEFAULT_SOURCE=yfinance
+      # Uncomment and fill in for J-Quants support:
+      # - JQUANTS_API_EMAIL=your_email@example.com
+      # - JQUANTS_API_PASSWORD=your_password
+    restart: unless-stopped
