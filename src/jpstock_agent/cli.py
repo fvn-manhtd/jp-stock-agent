@@ -15,7 +15,7 @@ from functools import wraps
 import click
 from tabulate import tabulate
 
-from . import core
+from . import core, ta, candlestick, backtest
 from .config import get_settings
 
 # ---------------------------------------------------------------------------
@@ -316,6 +316,276 @@ def jq_statements(symbol, fmt):
 def jq_calendar(from_date, to_date, fmt):
     """Fetch TSE trading calendar from J-Quants."""
     data = core.jquants_trading_calendar(from_date, to_date)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Technical Analysis Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="ta-sma")
+@click.argument("symbol")
+@click.option("--period", "-p", default=20, type=int, help="SMA period (default 20)")
+@common_options
+def cli_ta_sma(symbol, period, source, fmt):
+    """Calculate Simple Moving Average."""
+    data = ta.ta_sma(symbol, period, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-ema")
+@click.argument("symbol")
+@click.option("--period", "-p", default=20, type=int, help="EMA period (default 20)")
+@common_options
+def cli_ta_ema(symbol, period, source, fmt):
+    """Calculate Exponential Moving Average."""
+    data = ta.ta_ema(symbol, period, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-rsi")
+@click.argument("symbol")
+@click.option("--period", "-p", default=14, type=int, help="RSI period (default 14)")
+@common_options
+def cli_ta_rsi(symbol, period, source, fmt):
+    """Calculate RSI (Relative Strength Index)."""
+    data = ta.ta_rsi(symbol, period, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-macd")
+@click.argument("symbol")
+@click.option("--fast", default=12, type=int, help="Fast period (default 12)")
+@click.option("--slow", default=26, type=int, help="Slow period (default 26)")
+@click.option("--signal", default=9, type=int, help="Signal period (default 9)")
+@common_options
+def cli_ta_macd(symbol, fast, slow, signal, source, fmt):
+    """Calculate MACD indicator."""
+    data = ta.ta_macd(symbol, fast, slow, signal, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-bbands")
+@click.argument("symbol")
+@click.option("--period", "-p", default=20, type=int, help="Period (default 20)")
+@click.option("--std", default=2.0, type=float, help="Std deviation (default 2.0)")
+@common_options
+def cli_ta_bbands(symbol, period, std, source, fmt):
+    """Calculate Bollinger Bands."""
+    data = ta.ta_bbands(symbol, period, std, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-ichimoku")
+@click.argument("symbol")
+@common_options
+def cli_ta_ichimoku(symbol, source, fmt):
+    """Calculate Ichimoku Cloud."""
+    data = ta.ta_ichimoku(symbol, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-stoch")
+@click.argument("symbol")
+@click.option("--k", "k_period", default=14, type=int, help="%K period (default 14)")
+@click.option("--d", "d_period", default=3, type=int, help="%D period (default 3)")
+@common_options
+def cli_ta_stoch(symbol, k_period, d_period, source, fmt):
+    """Calculate Stochastic Oscillator."""
+    data = ta.ta_stochastic(symbol, k_period, d_period, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-atr")
+@click.argument("symbol")
+@click.option("--period", "-p", default=14, type=int, help="ATR period (default 14)")
+@common_options
+def cli_ta_atr(symbol, period, source, fmt):
+    """Calculate Average True Range (ATR)."""
+    data = ta.ta_atr(symbol, period, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-supertrend")
+@click.argument("symbol")
+@click.option("--period", "-p", default=10, type=int, help="Period (default 10)")
+@click.option("--multiplier", "-m", default=3.0, type=float, help="Multiplier (default 3.0)")
+@common_options
+def cli_ta_supertrend(symbol, period, multiplier, source, fmt):
+    """Calculate Supertrend indicator."""
+    data = ta.ta_supertrend(symbol, period, multiplier, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-obv")
+@click.argument("symbol")
+@common_options
+def cli_ta_obv(symbol, source, fmt):
+    """Calculate On-Balance Volume (OBV)."""
+    data = ta.ta_obv(symbol, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-vwap")
+@click.argument("symbol")
+@common_options
+def cli_ta_vwap(symbol, source, fmt):
+    """Calculate Volume Weighted Average Price (VWAP)."""
+    data = ta.ta_vwap(symbol, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-fibonacci")
+@click.argument("symbol")
+@common_options
+def cli_ta_fibonacci(symbol, source, fmt):
+    """Calculate Fibonacci retracement levels."""
+    data = ta.ta_fibonacci(symbol, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-support")
+@click.argument("symbol")
+@click.option("--window", "-w", default=20, type=int, help="Rolling window (default 20)")
+@common_options
+def cli_ta_support(symbol, window, source, fmt):
+    """Detect support and resistance levels."""
+    data = ta.ta_support_resistance(symbol, window, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-analysis")
+@click.argument("symbol")
+@common_options
+def cli_ta_analysis(symbol, source, fmt):
+    """Run comprehensive multi-indicator analysis with BUY/SELL/HOLD signal."""
+    data = ta.ta_multi_indicator(symbol, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-screen")
+@click.argument("symbols")
+@click.option("--strategy", "-st", default="oversold",
+              help="Strategy: oversold, overbought, macd_bullish, macd_bearish, bb_squeeze, "
+                   "golden_cross, death_cross, volume_spike, trend_up, trend_down")
+@common_options
+def cli_ta_screen(symbols, strategy, source, fmt):
+    """Screen multiple stocks for technical signals (comma-separated symbols)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = ta.ta_screen(sym_list, strategy, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-mtf")
+@click.argument("symbol")
+@common_options
+def cli_ta_mtf(symbol, source, fmt):
+    """Multi-timeframe analysis (daily, weekly, monthly)."""
+    data = ta.ta_multi_timeframe(symbol, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Candlestick Pattern Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="ta-candle-scan")
+@click.argument("symbol")
+@common_options
+def cli_ta_candle_scan(symbol, source, fmt):
+    """Scan for all candlestick patterns in recent data."""
+    data = candlestick.ta_candlestick_scan(symbol, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-candle-latest")
+@click.argument("symbol")
+@common_options
+def cli_ta_candle_latest(symbol, source, fmt):
+    """Get candlestick patterns on the most recent trading day."""
+    data = candlestick.ta_candlestick_latest(symbol, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ta-candle-screen")
+@click.argument("symbols")
+@click.option("--pattern", "-p", default="all",
+              help="Filter: all, bullish, bearish, or pattern name (hammer, doji, etc.)")
+@common_options
+def cli_ta_candle_screen(symbols, pattern, source, fmt):
+    """Screen multiple stocks for candlestick patterns (comma-separated)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = candlestick.ta_candlestick_screen(sym_list, pattern, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Backtesting Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="backtest")
+@click.argument("symbol")
+@click.option("--strategy", "-st", default="sma_crossover",
+              help="Strategy: sma_crossover, ema_crossover, rsi_reversal, macd_crossover, "
+                   "bollinger_bounce, supertrend, ichimoku_cloud, golden_cross, "
+                   "mean_reversion, momentum, breakout, vwap_strategy")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--capital", default=1000000, type=float, help="Initial capital (default 1,000,000)")
+@common_options
+def cli_backtest(symbol, strategy, start, end, capital, source, fmt):
+    """Backtest a trading strategy on historical data."""
+    data = backtest.backtest_strategy(symbol, strategy, start, end, capital, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="backtest-compare")
+@click.argument("symbol")
+@click.option("--strategies", default=None, help="Comma-separated strategies (default: all 12)")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--capital", default=1000000, type=float, help="Initial capital")
+@common_options
+def cli_backtest_compare(symbol, strategies, start, end, capital, source, fmt):
+    """Compare multiple backtesting strategies side by side."""
+    strat_list = None
+    if strategies:
+        strat_list = [s.strip() for s in strategies.split(",") if s.strip()]
+    data = backtest.backtest_compare(symbol, strat_list, start, end, capital, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="backtest-optimize")
+@click.argument("symbol")
+@click.option("--strategy", "-st", default="sma_crossover", help="Strategy to optimize")
+@click.option("--param", "-p", default="fast_period", help="Parameter name to vary")
+@click.option("--values", "-v", default="10,15,20,25,30", help="Comma-separated param values")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--capital", default=1000000, type=float, help="Initial capital")
+@common_options
+def cli_backtest_optimize(symbol, strategy, param, values, start, end, capital, source, fmt):
+    """Optimize strategy parameters by testing multiple values."""
+    val_list = [float(v.strip()) for v in values.split(",") if v.strip()]
+    data = backtest.backtest_optimize(symbol, strategy, param, val_list, start, end, capital, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="backtest-walk")
+@click.argument("symbol")
+@click.option("--strategy", "-st", default="sma_crossover", help="Strategy to test")
+@click.option("--window", "-w", default=180, type=int, help="Window size in days (default 180)")
+@click.option("--step", default=30, type=int, help="Step size in days (default 30)")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--capital", default=1000000, type=float, help="Initial capital")
+@common_options
+def cli_backtest_walk(symbol, strategy, window, step, start, end, capital, source, fmt):
+    """Walk-forward analysis on rolling windows."""
+    data = backtest.backtest_walk_forward(symbol, strategy, window, step, start, end, capital, source)
     click.echo(_format_output(data, fmt))
 
 

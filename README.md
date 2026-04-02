@@ -6,9 +6,13 @@ Seamlessly integrate Japanese stock market data with AI assistants like **Claude
 
 ## Features
 
-- **22 MCP tools** for AI integration (Claude Desktop, Cursor, etc.)
-- **22 CLI commands** for terminal usage
-- **Dual data sources**: yfinance (free, no auth) + J-Quants (official JPX data)
+- **48 MCP tools** for AI integration (Claude Desktop, Cursor, etc.)
+- **40+ CLI commands** for terminal usage
+- **Three data sources**: yfinance (free) + J-Quants (official JPX) + vnstock (Vietnamese markets)
+- **24 Technical Analysis indicators**: RSI, MACD, Bollinger Bands, Ichimoku Cloud, Stochastic, ATR, Supertrend, VWAP, Fibonacci, and more
+- **Stock screening**: scan multiple symbols with 10 strategies (oversold, golden cross, volume spike, etc.)
+- **Multi-indicator analysis**: one-call comprehensive analysis with BUY/SELL/HOLD signals
+- **Multi-timeframe analysis**: daily, weekly, monthly trend comparison
 - Stock prices (OHLCV, intraday, order book)
 - Company info (overview, shareholders, officers, news, events)
 - Financial statements (balance sheet, income, cash flow, ratios)
@@ -58,6 +62,40 @@ jpstock-agent history 7203 --format json
 
 # Use J-Quants as data source
 jpstock-agent overview 7203 --source jquants
+```
+
+### Technical Analysis
+
+```bash
+# RSI indicator (Toyota)
+jpstock-agent ta-rsi 7203
+
+# MACD indicator (Sony)
+jpstock-agent ta-macd 6758
+
+# Ichimoku Cloud (SoftBank)
+jpstock-agent ta-ichimoku 9984
+
+# Bollinger Bands
+jpstock-agent ta-bbands 7203
+
+# Fibonacci retracement levels
+jpstock-agent ta-fibonacci 7203
+
+# Support and resistance levels
+jpstock-agent ta-support 7203
+
+# Full multi-indicator analysis with BUY/SELL/HOLD signal
+jpstock-agent ta-analysis 7203
+
+# Screen multiple stocks for oversold conditions (RSI < 30)
+jpstock-agent ta-screen 7203,6758,9984,8306,6501 --strategy oversold
+
+# Screen for MACD bullish crossover
+jpstock-agent ta-screen 7203,6758,9984 --strategy macd_bullish
+
+# Multi-timeframe analysis (daily/weekly/monthly)
+jpstock-agent ta-mtf 7203
 ```
 
 ### MCP Server

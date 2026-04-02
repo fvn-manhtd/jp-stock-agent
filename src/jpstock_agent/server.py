@@ -12,7 +12,7 @@ import json
 
 from fastmcp import FastMCP
 
-from . import core
+from . import core, ta, candlestick, backtest
 from .config import get_settings
 
 app = FastMCP(
@@ -441,6 +441,637 @@ def jquants_trading_calendar(
         to_date: End date (YYYY-MM-DD).
     """
     result = core.jquants_trading_calendar(from_date, to_date)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Technical Analysis Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def ta_sma(
+    symbol: str,
+    period: int = 20,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Simple Moving Average (SMA).
+
+    Args:
+        symbol: Ticker code, e.g. "7203" or "ACB".
+        period: Lookback period (default 20).
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    result = ta.ta_sma(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_ema(
+    symbol: str,
+    period: int = 20,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Exponential Moving Average (EMA).
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 20).
+    """
+    result = ta.ta_ema(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_rsi(
+    symbol: str,
+    period: int = 14,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Relative Strength Index (RSI). RSI<30=oversold, RSI>70=overbought.
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 14).
+    """
+    result = ta.ta_rsi(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_macd(
+    symbol: str,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate MACD (Moving Average Convergence Divergence).
+
+    Args:
+        symbol: Ticker code.
+        fast: Fast EMA period (default 12).
+        slow: Slow EMA period (default 26).
+        signal: Signal line period (default 9).
+    """
+    result = ta.ta_macd(symbol, fast, slow, signal, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_bbands(
+    symbol: str,
+    period: int = 20,
+    std_dev: float = 2.0,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Bollinger Bands (upper, middle, lower).
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 20).
+        std_dev: Standard deviation multiplier (default 2.0).
+    """
+    result = ta.ta_bbands(symbol, period, std_dev, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_ichimoku(
+    symbol: str,
+    tenkan: int = 9,
+    kijun: int = 26,
+    senkou: int = 52,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Ichimoku Cloud (Japan's most popular indicator).
+
+    Args:
+        symbol: Ticker code.
+        tenkan: Conversion line period (default 9).
+        kijun: Base line period (default 26).
+        senkou: Leading span B period (default 52).
+    """
+    result = ta.ta_ichimoku(symbol, tenkan, kijun, senkou, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_stochastic(
+    symbol: str,
+    k_period: int = 14,
+    d_period: int = 3,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Stochastic Oscillator (%K, %D). %K<20=oversold, %K>80=overbought.
+
+    Args:
+        symbol: Ticker code.
+        k_period: %K period (default 14).
+        d_period: %D period (default 3).
+    """
+    result = ta.ta_stochastic(symbol, k_period, d_period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_atr(
+    symbol: str,
+    period: int = 14,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Average True Range (ATR) - volatility measure.
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 14).
+    """
+    result = ta.ta_atr(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_supertrend(
+    symbol: str,
+    period: int = 10,
+    multiplier: float = 3.0,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Supertrend indicator (trend direction + support/resistance).
+
+    Args:
+        symbol: Ticker code.
+        period: ATR period (default 10).
+        multiplier: ATR multiplier (default 3.0).
+    """
+    result = ta.ta_supertrend(symbol, period, multiplier, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_obv(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate On-Balance Volume (OBV) - volume trend indicator.
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = ta.ta_obv(symbol, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_vwap(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Volume Weighted Average Price (VWAP).
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = ta.ta_vwap(symbol, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_mfi(
+    symbol: str,
+    period: int = 14,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Money Flow Index (MFI) - volume-weighted RSI. MFI<20=oversold, MFI>80=overbought.
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 14).
+    """
+    result = ta.ta_mfi(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_williams_r(
+    symbol: str,
+    period: int = 14,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Williams %R indicator.
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 14).
+    """
+    result = ta.ta_williams_r(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_cci(
+    symbol: str,
+    period: int = 20,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Commodity Channel Index (CCI).
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 20).
+    """
+    result = ta.ta_cci(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_roc(
+    symbol: str,
+    period: int = 12,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Rate of Change (ROC).
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 12).
+    """
+    result = ta.ta_roc(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_keltner(
+    symbol: str,
+    period: int = 20,
+    multiplier: float = 2.0,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Keltner Channels.
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 20).
+        multiplier: ATR multiplier (default 2.0).
+    """
+    result = ta.ta_keltner(symbol, period, multiplier, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_donchian(
+    symbol: str,
+    period: int = 20,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Donchian Channels (highest high / lowest low).
+
+    Args:
+        symbol: Ticker code.
+        period: Lookback period (default 20).
+    """
+    result = ta.ta_donchian(symbol, period, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_parabolic_sar(
+    symbol: str,
+    af: float = 0.02,
+    max_af: float = 0.2,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Parabolic SAR (Stop and Reverse).
+
+    Args:
+        symbol: Ticker code.
+        af: Acceleration factor (default 0.02).
+        max_af: Maximum acceleration factor (default 0.2).
+    """
+    result = ta.ta_parabolic_sar(symbol, af, max_af, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_ad(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Accumulation/Distribution Line.
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = ta.ta_ad(symbol, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_fibonacci(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Calculate Fibonacci retracement levels (0%, 23.6%, 38.2%, 50%, 61.8%, 78.6%, 100%).
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = ta.ta_fibonacci(symbol, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_support_resistance(
+    symbol: str,
+    window: int = 20,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Detect support and resistance levels using pivot points.
+
+    Args:
+        symbol: Ticker code.
+        window: Rolling window for local highs/lows (default 20).
+    """
+    result = ta.ta_support_resistance(symbol, window, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_multi_indicator(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Run comprehensive multi-indicator analysis with BUY/SELL/HOLD signal.
+
+    Combines RSI, MACD, Bollinger Bands, Stochastic, moving averages,
+    and generates an overall signal score from -100 (strong sell) to +100 (strong buy).
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = ta.ta_multi_indicator(symbol, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_screen(
+    symbols: str,
+    strategy: str = "oversold",
+    source: str | None = None,
+) -> str:
+    """Screen multiple stocks for technical signals.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984" or "ACB,VNM,VIC".
+        strategy: One of: "oversold", "overbought", "macd_bullish", "macd_bearish",
+                  "bb_squeeze", "golden_cross", "death_cross", "volume_spike",
+                  "trend_up", "trend_down".
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = ta.ta_screen(sym_list, strategy, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_multi_timeframe(
+    symbol: str,
+    source: str | None = None,
+) -> str:
+    """Analyze a stock across daily, weekly, and monthly timeframes.
+
+    Returns RSI, MACD, trend direction for each timeframe.
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = ta.ta_multi_timeframe(symbol, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Candlestick Pattern Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def ta_candlestick_scan(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Scan for all Japanese candlestick patterns in recent price data.
+
+    Detects 20 patterns: Hammer, Inverted Hammer, Hanging Man, Shooting Star,
+    Doji, Spinning Top, High Wave, Marubozu, Engulfing, Tweezer, Piercing Line,
+    Morning Star, Evening Star, Three White Soldiers, Three Black Crows, etc.
+
+    Args:
+        symbol: Ticker code, e.g. "7203" or "ACB".
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    result = candlestick.ta_candlestick_scan(symbol, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_candlestick_latest(
+    symbol: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Get candlestick patterns detected on the most recent trading day.
+
+    Args:
+        symbol: Ticker code.
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    result = candlestick.ta_candlestick_latest(symbol, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ta_candlestick_screen(
+    symbols: str,
+    pattern: str = "all",
+    source: str | None = None,
+) -> str:
+    """Screen multiple stocks for candlestick patterns.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        pattern: Filter - "all", "bullish", "bearish", or specific pattern name
+                 (e.g. "hammer", "doji", "engulfing").
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = candlestick.ta_candlestick_screen(sym_list, pattern, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Backtesting Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def backtest_strategy(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    start: str | None = None,
+    end: str | None = None,
+    initial_capital: float = 1000000,
+    source: str | None = None,
+) -> str:
+    """Backtest a trading strategy on historical data.
+
+    Runs the strategy and returns performance metrics: total return, win rate,
+    max drawdown, Sharpe ratio, alpha vs buy-and-hold.
+
+    Args:
+        symbol: Ticker code, e.g. "7203".
+        strategy: One of: "sma_crossover", "ema_crossover", "rsi_reversal",
+                  "macd_crossover", "bollinger_bounce", "supertrend",
+                  "ichimoku_cloud", "golden_cross", "mean_reversion",
+                  "momentum", "breakout", "vwap_strategy".
+        start: Start date (YYYY-MM-DD). Defaults to 1 year ago.
+        end: End date (YYYY-MM-DD).
+        initial_capital: Starting capital in JPY (default 1,000,000).
+        source: Data source override.
+    """
+    result = backtest.backtest_strategy(symbol, strategy, start, end, initial_capital, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def backtest_compare(
+    symbol: str,
+    strategies: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    initial_capital: float = 1000000,
+    source: str | None = None,
+) -> str:
+    """Compare multiple backtesting strategies side by side.
+
+    Args:
+        symbol: Ticker code.
+        strategies: Comma-separated strategy names. If empty, runs all 12 strategies.
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        initial_capital: Starting capital in JPY (default 1,000,000).
+        source: Data source override.
+    """
+    strat_list = None
+    if strategies:
+        strat_list = [s.strip() for s in strategies.split(",") if s.strip()]
+    result = backtest.backtest_compare(symbol, strat_list, start, end, initial_capital, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def backtest_optimize(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    param_name: str = "fast_period",
+    param_values: str = "10,15,20,25,30",
+    start: str | None = None,
+    end: str | None = None,
+    initial_capital: float = 1000000,
+    source: str | None = None,
+) -> str:
+    """Optimize a strategy parameter by testing multiple values.
+
+    Args:
+        symbol: Ticker code.
+        strategy: Strategy to optimize.
+        param_name: Parameter to vary (e.g. "fast_period", "rsi_period").
+        param_values: Comma-separated values to test, e.g. "10,15,20,25,30".
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        initial_capital: Starting capital.
+        source: Data source override.
+    """
+    values = [float(v.strip()) for v in param_values.split(",") if v.strip()]
+    result = backtest.backtest_optimize(symbol, strategy, param_name, values, start, end, initial_capital, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def backtest_walk_forward(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    window: int = 180,
+    step: int = 30,
+    start: str | None = None,
+    end: str | None = None,
+    initial_capital: float = 1000000,
+    source: str | None = None,
+) -> str:
+    """Walk-forward analysis: test strategy on rolling windows for consistency.
+
+    Args:
+        symbol: Ticker code.
+        strategy: Strategy to test.
+        window: Window size in days (default 180).
+        step: Step size in days (default 30).
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        initial_capital: Starting capital.
+        source: Data source override.
+    """
+    result = backtest.backtest_walk_forward(symbol, strategy, window, step, start, end, initial_capital, source)
     return json.dumps(result, default=str, ensure_ascii=False)
 
 
