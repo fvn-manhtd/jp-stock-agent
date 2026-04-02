@@ -13,11 +13,37 @@ import pandas as pd
 from jpstock_agent.core import (
     _default_dates,
     _df_to_records,
+    _jq_get_listed_info,
+    _jq_get_prices,
+    _jq_get_statements,
+    _jq_get_trading_calendar,
+    _jq_is_v2,
     _safe_call,
+    _suppress_stdout,
+    company_events,
+    company_news,
+    company_officers,
     company_overview,
+    company_shareholders,
+    crypto_history,
+    financial_balance_sheet,
+    financial_cash_flow,
+    financial_income_statement,
+    financial_ratio,
+    fx_history,
+    jquants_financial_statements,
+    jquants_trading_calendar,
+    listing_all_symbols,
+    listing_sectors,
+    listing_symbols_by_market,
+    listing_symbols_by_sector,
     stock_history,
     stock_intraday,
     stock_price_depth,
+    trading_price_board,
+    vnstocks_listing,
+    vnstocks_price_board,
+    world_index_history,
 )
 
 
@@ -499,9 +525,10 @@ class TestCompanyOverview:
 class TestErrorHandling:
     """Test error handling across core functions."""
 
+    @patch("jpstock_agent.core.time.sleep")
     @patch("yfinance.Ticker")
-    def test_stock_history_network_error(self, mock_ticker_class):
-        """Test that network errors are caught and returned as error dict."""
+    def test_stock_history_network_error(self, mock_ticker_class, mock_sleep):
+        """Test that network errors are caught and returned as error dict after retries."""
         mock_ticker = MagicMock()
         mock_ticker.history.side_effect = ConnectionError("Network failure")
         mock_ticker_class.return_value = mock_ticker
@@ -555,3 +582,856 @@ class TestIntegrationScenarios:
         assert history[0]["close"] == 2500.0
         assert depth["bid"] == 2520.0
         assert depth["ask"] == 2530.0
+
+
+# ---------------------------------------------------------------------------
+# J-Quants dispatch helpers
+# ---------------------------------------------------------------------------
+
+
+class TestJQuantsHelpers:
+    """Test J-Quants client version dispatch helpers."""
+
+    def test_jq_is_v2_true(self):
+        """Test _jq_is_v2 returns True for v2 client."""
+        mock_client = MagicMock(spec=["get_eq_bars_daily", "get_list"])
+        assert _jq_is_v2(mock_client) is True
+
+    def test_jq_is_v2_false_for_v1(self):
+        """Test _jq_is_v2 returns False for v1 client."""
+        mock_client = MagicMock(spec=["get_prices_daily_quotes", "get_listed_info"])
+        assert _jq_is_v2(mock_client) is False
+
+    def test_jq_get_prices_v2(self):
+        """Test _jq_get_prices uses v2 method."""
+        mock_client = MagicMock(spec=["get_eq_bars_daily"])
+        _jq_get_prices(mock_client, "7203", "20260101", "20260401")
+        mock_client.get_eq_bars_daily.assert_called_once_with(
+            code="7203", from_yyyymmdd="20260101", to_yyyymmdd="20260401"
+        )
+
+    def test_jq_get_prices_v1(self):
+        """Test _jq_get_prices uses v1 method."""
+        mock_client = MagicMock(spec=["get_prices_daily_quotes"])
+        _jq_get_prices(mock_client, "7203", "20260101", "20260401")
+        mock_client.get_prices_daily_quotes.assert_called_once_with(
+            code="7203", from_yyyymmdd="20260101", to_yyyymmdd="20260401"
+        )
+
+    def test_jq_get_listed_info_v2_with_code(self):
+        """Test _jq_get_listed_info v2 with specific code."""
+        mock_client = MagicMock(spec=["get_eq_bars_daily", "get_list"])
+        _jq_get_listed_info(mock_client, "7203")
+        mock_client.get_list.assert_called_once_with(code="7203")
+
+    def test_jq_get_listed_info_v1_with_code(self):
+        """Test _jq_get_listed_info v1 with specific code."""
+        mock_client = MagicMock(spec=["get_prices_daily_quotes", "get_listed_info"])
+        _jq_get_listed_info(mock_client, "7203")
+        mock_client.get_listed_info.assert_called_once_with(code="7203")
+
+    def test_jq_get_listed_info_v1_no_code(self):
+        """Test _jq_get_listed_info v1 without code lists all."""
+        mock_client = MagicMock(spec=["get_prices_daily_quotes", "get_listed_info"])
+        _jq_get_listed_info(mock_client, "")
+        mock_client.get_listed_info.assert_called_once_with()
+
+    def test_jq_get_statements_v2(self):
+        """Test _jq_get_statements uses v2 method."""
+        mock_client = MagicMock(spec=["get_eq_bars_daily", "get_fin_summary"])
+        _jq_get_statements(mock_client, "7203")
+        mock_client.get_fin_summary.assert_called_once_with(code="7203")
+
+    def test_jq_get_statements_v1(self):
+        """Test _jq_get_statements uses v1 method."""
+        mock_client = MagicMock(spec=["get_prices_daily_quotes", "get_statements"])
+        _jq_get_statements(mock_client, "7203")
+        mock_client.get_statements.assert_called_once_with(code="7203")
+
+    def test_jq_get_trading_calendar_v2(self):
+        """Test _jq_get_trading_calendar uses v2 method."""
+        mock_client = MagicMock(spec=["get_eq_bars_daily", "get_mkt_calendar"])
+        _jq_get_trading_calendar(mock_client, "20260101", "20260401")
+        mock_client.get_mkt_calendar.assert_called_once_with(
+            from_yyyymmdd="20260101", to_yyyymmdd="20260401"
+        )
+
+    def test_jq_get_trading_calendar_v1(self):
+        """Test _jq_get_trading_calendar uses v1 method."""
+        mock_client = MagicMock(spec=["get_prices_daily_quotes", "get_markets_trading_calendar"])
+        _jq_get_trading_calendar(mock_client, "20260101", "20260401")
+        mock_client.get_markets_trading_calendar.assert_called_once_with(
+            from_yyyymmdd="20260101", to_yyyymmdd="20260401"
+        )
+
+
+class TestSuppressStdout:
+    """Test the _suppress_stdout context manager."""
+
+    def test_suppress_stdout_silences_print(self):
+        import sys
+        import io
+
+        captured = io.StringIO()
+        old_stdout = sys.stdout
+
+        with _suppress_stdout():
+            print("should not appear")
+
+        # Stdout should be restored after context
+        assert sys.stdout == old_stdout
+
+
+# ---------------------------------------------------------------------------
+# Company Information Functions
+# ---------------------------------------------------------------------------
+
+
+class TestCompanyShareholders:
+    """Test company_shareholders()."""
+
+    @patch("yfinance.Ticker")
+    def test_shareholders_yfinance(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.major_holders = pd.DataFrame({"0": [0.05], "1": ["Insiders"]})
+        mock_ticker.institutional_holders = pd.DataFrame({
+            "Holder": ["BlackRock"], "Shares": [1000000]
+        })
+        mock_ticker_class.return_value = mock_ticker
+
+        result = company_shareholders("7203", source="yfinance")
+        assert isinstance(result, dict)
+        assert "major_holders" in result
+        assert "institutional_holders" in result
+
+    def test_shareholders_jquants_not_available(self):
+        result = company_shareholders("7203", source="jquants")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_shareholders_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.company.shareholders.return_value = pd.DataFrame({"name": ["A"]})
+        mock_vn.return_value = mock_stock
+
+        result = company_shareholders("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+
+class TestCompanyOfficers:
+    """Test company_officers()."""
+
+    @patch("yfinance.Ticker")
+    def test_officers_yfinance_with_data(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.info = {
+            "companyOfficers": [{"name": "CEO", "title": "Chief Executive"}]
+        }
+        mock_ticker_class.return_value = mock_ticker
+
+        result = company_officers("7203", source="yfinance")
+        assert isinstance(result, list)
+        assert result[0]["name"] == "CEO"
+
+    @patch("yfinance.Ticker")
+    def test_officers_yfinance_no_data(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.info = {}
+        mock_ticker_class.return_value = mock_ticker
+
+        result = company_officers("7203", source="yfinance")
+        assert isinstance(result, dict)
+        assert "message" in result
+
+    def test_officers_jquants_not_available(self):
+        result = company_officers("7203", source="jquants")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+
+class TestCompanyNews:
+    """Test company_news()."""
+
+    @patch("yfinance.Ticker")
+    def test_news_yfinance(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.news = [{"title": "Toyota reports earnings"}]
+        mock_ticker_class.return_value = mock_ticker
+
+        result = company_news("7203", source="yfinance")
+        assert isinstance(result, list)
+        assert result[0]["title"] == "Toyota reports earnings"
+
+    @patch("yfinance.Ticker")
+    def test_news_yfinance_empty(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.news = []
+        mock_ticker_class.return_value = mock_ticker
+
+        result = company_news("7203", source="yfinance")
+        assert result == []
+
+    def test_news_jquants_not_available(self):
+        result = company_news("7203", source="jquants")
+        assert "error" in result
+
+    def test_news_vnstocks_not_available(self):
+        result = company_news("ACB", source="vnstocks")
+        assert "error" in result
+
+
+class TestCompanyEvents:
+    """Test company_events()."""
+
+    @patch("yfinance.Ticker")
+    def test_events_yfinance_full(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.calendar = {"Earnings Date": "2026-05-01"}
+        mock_ticker.dividends = pd.Series(
+            [50.0, 55.0], index=pd.date_range("2025-01-01", periods=2, freq="6ME")
+        )
+        mock_ticker.splits = pd.Series(dtype=float)
+        mock_ticker_class.return_value = mock_ticker
+
+        result = company_events("7203", source="yfinance")
+        assert isinstance(result, dict)
+        assert "calendar" in result
+        assert "recent_dividends" in result
+
+    @patch("yfinance.Ticker")
+    def test_events_yfinance_no_data(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.calendar = {"error": "no data"}
+        mock_ticker.dividends = pd.Series(dtype=float)
+        mock_ticker.splits = pd.Series(dtype=float)
+        mock_ticker_class.return_value = mock_ticker
+
+        result = company_events("7203", source="yfinance")
+        assert isinstance(result, dict)
+        assert "message" in result
+
+    def test_events_jquants_not_available(self):
+        result = company_events("7203", source="jquants")
+        assert "error" in result
+
+    def test_events_vnstocks_not_available(self):
+        result = company_events("ACB", source="vnstocks")
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Financial Statement Functions
+# ---------------------------------------------------------------------------
+
+
+class TestFinancialBalanceSheet:
+    """Test financial_balance_sheet()."""
+
+    @patch("yfinance.Ticker")
+    def test_balance_sheet_yfinance_annual(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.balance_sheet = pd.DataFrame({"TotalAssets": [5000000]})
+        mock_ticker_class.return_value = mock_ticker
+
+        result = financial_balance_sheet("7203", period="annual", source="yfinance")
+        assert isinstance(result, list)
+
+    @patch("yfinance.Ticker")
+    def test_balance_sheet_yfinance_quarterly(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.quarterly_balance_sheet = pd.DataFrame({"TotalAssets": [5000000]})
+        mock_ticker_class.return_value = mock_ticker
+
+        result = financial_balance_sheet("7203", period="quarterly", source="yfinance")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_balance_sheet_jquants_no_creds(self, mock_client):
+        mock_client.return_value = None
+        result = financial_balance_sheet("7203", source="jquants")
+        assert "error" in result
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_balance_sheet_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.finance.balance_sheet.return_value = pd.DataFrame({"assets": [100]})
+        mock_vn.return_value = mock_stock
+
+        result = financial_balance_sheet("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+
+class TestFinancialIncomeStatement:
+    """Test financial_income_statement()."""
+
+    @patch("yfinance.Ticker")
+    def test_income_yfinance_annual(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.income_stmt = pd.DataFrame({"Revenue": [1000000]})
+        mock_ticker_class.return_value = mock_ticker
+
+        result = financial_income_statement("7203", source="yfinance")
+        assert isinstance(result, list)
+
+    @patch("yfinance.Ticker")
+    def test_income_yfinance_quarterly(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.quarterly_income_stmt = pd.DataFrame({"Revenue": [250000]})
+        mock_ticker_class.return_value = mock_ticker
+
+        result = financial_income_statement("7203", period="quarterly", source="yfinance")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_income_jquants_no_creds(self, mock_client):
+        mock_client.return_value = None
+        result = financial_income_statement("7203", source="jquants")
+        assert "error" in result
+
+
+class TestFinancialCashFlow:
+    """Test financial_cash_flow()."""
+
+    @patch("yfinance.Ticker")
+    def test_cash_flow_yfinance_annual(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.cashflow = pd.DataFrame({"OperatingCashFlow": [300000]})
+        mock_ticker_class.return_value = mock_ticker
+
+        result = financial_cash_flow("7203", source="yfinance")
+        assert isinstance(result, list)
+
+    @patch("yfinance.Ticker")
+    def test_cash_flow_yfinance_quarterly(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.quarterly_cashflow = pd.DataFrame({"OperatingCashFlow": [75000]})
+        mock_ticker_class.return_value = mock_ticker
+
+        result = financial_cash_flow("7203", period="quarterly", source="yfinance")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_cash_flow_jquants_no_creds(self, mock_client):
+        mock_client.return_value = None
+        result = financial_cash_flow("7203", source="jquants")
+        assert "error" in result
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_cash_flow_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.finance.cash_flow.return_value = pd.DataFrame({"cf": [100]})
+        mock_vn.return_value = mock_stock
+
+        result = financial_cash_flow("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+
+class TestFinancialRatio:
+    """Test financial_ratio()."""
+
+    @patch("yfinance.Ticker")
+    def test_ratio_yfinance(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.info = {
+            "trailingPE": 15.5, "forwardPE": 14.0, "priceToBook": 1.2,
+            "profitMargins": 0.08, "returnOnEquity": 0.12, "dividendYield": 0.035,
+        }
+        mock_ticker_class.return_value = mock_ticker
+
+        result = financial_ratio("7203", source="yfinance")
+        assert isinstance(result, dict)
+        assert result["trailingPE"] == 15.5
+        assert result["dividendYield"] == 0.035
+
+    def test_ratio_jquants_not_available(self):
+        result = financial_ratio("7203", source="jquants")
+        assert "error" in result
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_ratio_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.finance.ratio.return_value = pd.DataFrame({"pe": [12.0]})
+        mock_vn.return_value = mock_stock
+
+        result = financial_ratio("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# Market Listing Functions
+# ---------------------------------------------------------------------------
+
+
+class TestListingAllSymbols:
+    """Test listing_all_symbols()."""
+
+    @patch("jpstock_agent.core.get_settings")
+    def test_listing_yfinance_fallback(self, mock_settings):
+        mock_settings.return_value = MagicMock(jpstock_default_source="yfinance")
+        result = listing_all_symbols(source="yfinance")
+        assert isinstance(result, dict)
+        assert "message" in result
+        assert "common_indices" in result
+
+    @patch("jpstock_agent.core.get_jquants_client")
+    @patch("jpstock_agent.core.get_settings")
+    def test_listing_jquants_no_creds(self, mock_settings, mock_client):
+        mock_settings.return_value = MagicMock(jpstock_default_source="jquants")
+        mock_client.return_value = None
+        result = listing_all_symbols(source="jquants")
+        assert "error" in result
+
+
+class TestListingSymbolsBySector:
+    """Test listing_symbols_by_sector()."""
+
+    @patch("jpstock_agent.core.get_settings")
+    def test_sector_yfinance_not_available(self, mock_settings):
+        mock_settings.return_value = MagicMock(jpstock_default_source="yfinance")
+        result = listing_symbols_by_sector("Auto", source="yfinance")
+        assert "error" in result
+
+    @patch("jpstock_agent.core.get_jquants_client")
+    @patch("jpstock_agent.core.get_settings")
+    def test_sector_jquants_no_creds(self, mock_settings, mock_client):
+        mock_settings.return_value = MagicMock(jpstock_default_source="jquants")
+        mock_client.return_value = None
+        result = listing_symbols_by_sector("Auto", source="jquants")
+        assert "error" in result
+
+
+class TestListingSymbolsByMarket:
+    """Test listing_symbols_by_market()."""
+
+    @patch("jpstock_agent.core.get_settings")
+    def test_market_yfinance_not_available(self, mock_settings):
+        mock_settings.return_value = MagicMock(jpstock_default_source="yfinance")
+        result = listing_symbols_by_market("Prime", source="yfinance")
+        assert "error" in result
+
+
+class TestListingSectors:
+    """Test listing_sectors()."""
+
+    @patch("jpstock_agent.core.get_settings")
+    def test_sectors_yfinance_static_list(self, mock_settings):
+        mock_settings.return_value = MagicMock(jpstock_default_source="yfinance")
+        result = listing_sectors(source="yfinance")
+        assert isinstance(result, dict)
+        assert "tse_33_sectors" in result
+        assert len(result["tse_33_sectors"]) == 33
+
+
+# ---------------------------------------------------------------------------
+# Trading / Price Board Functions
+# ---------------------------------------------------------------------------
+
+
+class TestTradingPriceBoard:
+    """Test trading_price_board()."""
+
+    @patch("yfinance.Ticker")
+    def test_price_board_yfinance(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.info = {
+            "regularMarketPrice": 2500.0, "previousClose": 2490.0,
+            "regularMarketOpen": 2495.0, "regularMarketVolume": 5000000,
+            "marketCap": 300000000000,
+        }
+        mock_ticker_class.return_value = mock_ticker
+
+        result = trading_price_board(["7203", "6758"], source="yfinance")
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["price"] == 2500.0
+
+    def test_price_board_jquants_no_creds(self):
+        with patch("jpstock_agent.core.get_jquants_client", return_value=None):
+            result = trading_price_board(["7203"], source="jquants")
+            assert isinstance(result, dict)
+            assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Global / FX / Crypto / Index Functions
+# ---------------------------------------------------------------------------
+
+
+class TestFxHistory:
+    """Test fx_history()."""
+
+    @patch("yfinance.Ticker")
+    def test_fx_history_success(self, mock_ticker_class):
+        dates = pd.date_range("2026-01-01", periods=3)
+        mock_df = pd.DataFrame({"close": [150.0, 150.5, 151.0]}, index=dates)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = mock_df
+        mock_ticker_class.return_value = mock_ticker
+
+        result = fx_history("USDJPY=X")
+        assert isinstance(result, list)
+        assert len(result) == 3
+
+    @patch("yfinance.Ticker")
+    def test_fx_history_error(self, mock_ticker_class):
+        mock_ticker = MagicMock()
+        mock_ticker.history.side_effect = Exception("Network error")
+        mock_ticker_class.return_value = mock_ticker
+
+        result = fx_history("USDJPY=X")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+
+class TestCryptoHistory:
+    """Test crypto_history()."""
+
+    @patch("yfinance.Ticker")
+    def test_crypto_history_success(self, mock_ticker_class):
+        dates = pd.date_range("2026-01-01", periods=3)
+        mock_df = pd.DataFrame({"close": [50000, 51000, 52000]}, index=dates)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = mock_df
+        mock_ticker_class.return_value = mock_ticker
+
+        result = crypto_history("BTC-JPY")
+        assert isinstance(result, list)
+        assert len(result) == 3
+
+
+class TestWorldIndexHistory:
+    """Test world_index_history()."""
+
+    @patch("yfinance.Ticker")
+    def test_world_index_success(self, mock_ticker_class):
+        dates = pd.date_range("2026-01-01", periods=3)
+        mock_df = pd.DataFrame({"close": [30000, 30500, 31000]}, index=dates)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = mock_df
+        mock_ticker_class.return_value = mock_ticker
+
+        result = world_index_history("^N225")
+        assert isinstance(result, list)
+        assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# vnstock-specific functions
+# ---------------------------------------------------------------------------
+
+
+class TestVnstocksListing:
+    """Test vnstocks_listing()."""
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_vnstocks_listing_all(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.listing.all_symbols.return_value = pd.DataFrame({
+            "symbol": ["ACB", "VNM"], "exchange": ["HOSE", "HOSE"]
+        })
+        mock_vn.return_value = mock_stock
+
+        result = vnstocks_listing("ALL")
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_vnstocks_listing_filtered(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.listing.all_symbols.return_value = pd.DataFrame({
+            "symbol": ["ACB", "VNM", "HNX1"], "exchange": ["HOSE", "HOSE", "HNX"]
+        })
+        mock_vn.return_value = mock_stock
+
+        result = vnstocks_listing("HOSE")
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_vnstocks_listing_error(self, mock_vn):
+        mock_vn.side_effect = Exception("Connection error")
+
+        result = vnstocks_listing("HOSE")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+
+class TestVnstocksPriceBoard:
+    """Test vnstocks_price_board()."""
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_price_board_success(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.quote.history.return_value = pd.DataFrame({
+            "close": [25000.0], "volume": [1000000]
+        })
+        mock_vn.return_value = mock_stock
+
+        result = vnstocks_price_board(["ACB", "VNM"])
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_price_board_error(self, mock_vn):
+        mock_vn.return_value = {"error": "Connection failed"}
+
+        result = vnstocks_price_board(["ACB"])
+        assert isinstance(result, list)
+        assert result[0]["error"] == "Connection failed"
+
+
+# ---------------------------------------------------------------------------
+# J-Quants specific functions
+# ---------------------------------------------------------------------------
+
+
+class TestJquantsFinancialStatements:
+    """Test jquants_financial_statements()."""
+
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_no_credentials(self, mock_client):
+        mock_client.return_value = None
+        result = jquants_financial_statements("7203")
+        assert "error" in result
+
+    @patch("jpstock_agent.core._jq_get_statements")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_success(self, mock_client, mock_statements):
+        mock_client.return_value = MagicMock()
+        mock_statements.return_value = pd.DataFrame({"revenue": [1000000]})
+
+        result = jquants_financial_statements("7203")
+        assert isinstance(result, list)
+
+
+class TestJquantsTradingCalendar:
+    """Test jquants_trading_calendar()."""
+
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_no_credentials(self, mock_client):
+        mock_client.return_value = None
+        result = jquants_trading_calendar()
+        assert "error" in result
+
+    @patch("jpstock_agent.core._jq_get_trading_calendar")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_success(self, mock_client, mock_calendar):
+        mock_client.return_value = MagicMock()
+        mock_calendar.return_value = pd.DataFrame({
+            "date": ["20260401"], "holiday": [False]
+        })
+
+        result = jquants_trading_calendar("2026-04-01", "2026-04-30")
+        assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# J-Quants integration paths (with mock client)
+# ---------------------------------------------------------------------------
+
+
+class TestJQuantsIntegration:
+    """Test core functions through the jquants source path."""
+
+    @patch("jpstock_agent.core._jq_get_prices")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_stock_history_jquants_success(self, mock_client, mock_prices):
+        mock_client.return_value = MagicMock()
+        mock_prices.return_value = pd.DataFrame({
+            "date": ["20260401"], "close": [2500.0]
+        })
+
+        result = stock_history("7203", source="jquants")
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    @patch("jpstock_agent.core.time.sleep")
+    @patch("jpstock_agent.core._jq_get_prices")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_stock_history_jquants_error(self, mock_client, mock_prices, mock_sleep):
+        mock_client.return_value = MagicMock()
+        mock_prices.side_effect = Exception("API error")
+
+        result = stock_history("7203", source="jquants")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+    @patch("jpstock_agent.core._jq_get_prices")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_stock_intraday_jquants_success(self, mock_client, mock_prices):
+        mock_client.return_value = MagicMock()
+        mock_prices.return_value = pd.DataFrame({"close": [2500.0]})
+
+        result = stock_intraday("7203", source="jquants")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._jq_get_listed_info")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_company_overview_jquants_success(self, mock_client, mock_info):
+        mock_client.return_value = MagicMock()
+        mock_info.return_value = pd.DataFrame({"CompanyName": ["Toyota"]})
+
+        result = company_overview("7203", source="jquants")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._jq_get_statements")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_financial_balance_sheet_jquants_success(self, mock_client, mock_stmts):
+        mock_client.return_value = MagicMock()
+        mock_stmts.return_value = pd.DataFrame({"assets": [5000000]})
+
+        result = financial_balance_sheet("7203", source="jquants")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._jq_get_listed_info")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_listing_all_jquants_success(self, mock_client, mock_info):
+        mock_client.return_value = MagicMock()
+        mock_info.return_value = pd.DataFrame({
+            "Code": ["7203", "6758"], "CompanyName": ["Toyota", "Sony"]
+        })
+
+        result = listing_all_symbols(source="jquants")
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    @patch("jpstock_agent.core._jq_get_listed_info")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_listing_sectors_jquants_with_sectors(self, mock_client, mock_info):
+        mock_client.return_value = MagicMock()
+        mock_info.return_value = pd.DataFrame({
+            "Sector33Code": ["3050", "3050", "3100"],
+            "Sector33Name": ["Auto", "Auto", "IT"]
+        })
+
+        result = listing_sectors(source="jquants")
+        assert isinstance(result, list)
+        assert len(result) == 2  # deduplicated
+
+    @patch("jpstock_agent.core._jq_get_listed_info")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_listing_by_market_jquants_success(self, mock_client, mock_info):
+        mock_client.return_value = MagicMock()
+        mock_info.return_value = pd.DataFrame({
+            "Code": ["7203", "9999"], "MarketCode": ["Prime", "Growth"]
+        })
+
+        result = listing_symbols_by_market("Prime", source="jquants")
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    @patch("jpstock_agent.core._jq_get_listed_info")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_listing_by_sector_jquants_filter(self, mock_client, mock_info):
+        mock_client.return_value = MagicMock()
+        mock_info.return_value = pd.DataFrame({
+            "Code": ["7203", "6758"], "Sector": ["Automobile", "Electronics"]
+        })
+
+        result = listing_symbols_by_sector("auto", source="jquants")
+        assert isinstance(result, list)
+        assert len(result) == 1  # only "Automobile" matches
+
+
+# ---------------------------------------------------------------------------
+# vnstock integration paths
+# ---------------------------------------------------------------------------
+
+
+class TestVnstocksIntegration:
+    """Test core functions through the vnstocks source path."""
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_stock_history_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.quote.history.return_value = pd.DataFrame({
+            "close": [25000.0, 25500.0], "volume": [100000, 110000]
+        })
+        mock_vn.return_value = mock_stock
+
+        result = stock_history("ACB", source="vnstocks")
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_stock_intraday_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.quote.history.return_value = pd.DataFrame({"close": [25000.0]})
+        mock_vn.return_value = mock_stock
+
+        result = stock_intraday("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_company_overview_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.company.overview.return_value = pd.DataFrame({"name": ["ACB Bank"]})
+        mock_vn.return_value = mock_stock
+
+        result = company_overview("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_company_officers_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.company.officers.return_value = pd.DataFrame({"name": ["CEO"]})
+        mock_vn.return_value = mock_stock
+
+        result = company_officers("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_vnstocks_error_propagation(self, mock_vn):
+        mock_vn.return_value = {"error": "Connection failed"}
+
+        result = stock_history("ACB", source="vnstocks")
+        assert isinstance(result, dict)
+        assert "error" in result
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_financial_income_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.finance.income_statement.return_value = pd.DataFrame({"revenue": [100]})
+        mock_vn.return_value = mock_stock
+
+        result = financial_income_statement("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_financial_cash_flow_vnstocks(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.finance.cash_flow.return_value = pd.DataFrame({"cf": [100]})
+        mock_vn.return_value = mock_stock
+
+        result = financial_cash_flow("ACB", source="vnstocks")
+        assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# Trading price board - jquants and vnstocks paths
+# ---------------------------------------------------------------------------
+
+
+class TestTradingPriceBoardSources:
+    """Test trading_price_board through different source paths."""
+
+    @patch("jpstock_agent.core._jq_get_prices")
+    @patch("jpstock_agent.core.get_jquants_client")
+    def test_price_board_jquants_success(self, mock_client, mock_prices):
+        mock_client.return_value = MagicMock()
+        mock_prices.return_value = pd.DataFrame({"close": [2500.0]})
+
+        result = trading_price_board(["7203"], source="jquants")
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    @patch("jpstock_agent.core._vn_stock")
+    def test_price_board_vnstocks_success(self, mock_vn):
+        mock_stock = MagicMock()
+        mock_stock.quote.history.return_value = pd.DataFrame({
+            "close": [25000.0], "volume": [100000]
+        })
+        mock_vn.return_value = mock_stock
+
+        result = trading_price_board(["ACB"], source="vnstocks")
+        assert isinstance(result, list)

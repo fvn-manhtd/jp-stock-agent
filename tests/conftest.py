@@ -10,6 +10,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from jpstock_agent.core import cache_clear
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    """Clear the data cache before each test to prevent cross-test interference."""
+    cache_clear()
+    yield
+    cache_clear()
+
 # ---------------------------------------------------------------------------
 # Sample OHLCV data (60 days of realistic stock data)
 # ---------------------------------------------------------------------------

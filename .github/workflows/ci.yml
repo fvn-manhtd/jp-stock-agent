@@ -39,7 +39,7 @@ jobs:
             --cov=jpstock_agent \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
-            --cov-fail-under=65 \
+            --cov-fail-under=75 \
             -v
       - name: Upload coverage artifact
         if: matrix.python-version == '3.12'

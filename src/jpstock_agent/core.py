@@ -13,14 +13,20 @@ the MCP server and the CLI.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import math
+import time
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
 
 from .config import auto_detect_source, get_jquants_client, get_settings, normalize_symbol
+from .logging import LogTimer, get_logger
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # J-Quants client dispatch helpers
@@ -116,7 +122,131 @@ def _safe_call(func, *args, **kwargs) -> Any:
         result = func(*args, **kwargs)
         return result
     except Exception as e:
+        logger.warning("Call failed", extra={"function": getattr(func, "__name__", str(func)), "error": str(e)})
         return {"error": f"{type(e).__name__}: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# Retry logic with exponential backoff
+# ---------------------------------------------------------------------------
+
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 0.5    # seconds
+_RETRY_BACKOFF_FACTOR = 2  # exponential multiplier
+
+# Transient exceptions worth retrying
+_RETRYABLE_EXCEPTIONS = (
+    ConnectionError, TimeoutError, OSError,
+)
+
+
+def _safe_call_with_retry(func, *args, max_attempts: int = _RETRY_MAX_ATTEMPTS, **kwargs) -> Any:
+    """Call *func* with retry on transient errors.
+
+    Uses exponential backoff: 0.5s → 1s → 2s between retries.
+    Only retries on network-related exceptions (ConnectionError, TimeoutError, OSError).
+    """
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = func(*args, **kwargs)
+            if attempt > 1:
+                logger.info(
+                    f"Retry succeeded on attempt {attempt}",
+                    extra={"function": getattr(func, "__name__", str(func)), "retry_attempt": attempt},
+                )
+            return result
+        except _RETRYABLE_EXCEPTIONS as e:
+            last_error = e
+            if attempt < max_attempts:
+                delay = _RETRY_BASE_DELAY * (_RETRY_BACKOFF_FACTOR ** (attempt - 1))
+                logger.warning(
+                    f"Retrying ({attempt}/{max_attempts}), next in {delay}s",
+                    extra={
+                        "function": getattr(func, "__name__", str(func)),
+                        "retry_attempt": attempt,
+                        "error": str(e),
+                    },
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    f"All {max_attempts} retries exhausted",
+                    extra={"function": getattr(func, "__name__", str(func)), "error": str(e)},
+                )
+        except Exception as e:
+            # Non-retryable exception — fail immediately
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    return {"error": f"{type(last_error).__name__}: {last_error}"}
+
+
+# ---------------------------------------------------------------------------
+# LRU Cache for data functions
+# ---------------------------------------------------------------------------
+
+_CACHE_MAX_SIZE = 128
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+class _TTLCache:
+    """Simple thread-safe TTL-based LRU cache.
+
+    Stores results keyed by a hash of (function_name, args, kwargs).
+    Entries expire after ``ttl`` seconds.
+    """
+
+    def __init__(self, maxsize: int = _CACHE_MAX_SIZE, ttl: int = _CACHE_TTL_SECONDS):
+        self._maxsize = maxsize
+        self._ttl = ttl
+        self._cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+
+    def _make_key(self, func_name: str, args: tuple, kwargs: dict) -> str:
+        raw = f"{func_name}:{args}:{sorted(kwargs.items())}"
+        return hashlib.md5(raw.encode()).hexdigest()
+
+    def get(self, func_name: str, args: tuple, kwargs: dict) -> tuple[bool, Any]:
+        """Return (hit, value).  *hit* is False on miss or expiry."""
+        key = self._make_key(func_name, args, kwargs)
+        if key in self._cache:
+            ts, value = self._cache[key]
+            if time.time() - ts < self._ttl:
+                # Move to end (most recently used)
+                self._cache.move_to_end(key)
+                logger.debug("Cache hit", extra={"function": func_name, "cache_hit": True})
+                return True, value
+            else:
+                # Expired
+                del self._cache[key]
+        return False, None
+
+    def put(self, func_name: str, args: tuple, kwargs: dict, value: Any) -> None:
+        """Store a value in the cache."""
+        key = self._make_key(func_name, args, kwargs)
+        self._cache[key] = (time.time(), value)
+        self._cache.move_to_end(key)
+        # Evict oldest if over capacity
+        while len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)
+
+    def clear(self) -> None:
+        """Clear all cached entries."""
+        self._cache.clear()
+
+    @property
+    def size(self) -> int:
+        return len(self._cache)
+
+
+# Global cache instance
+_data_cache = _TTLCache()
+
+
+def cache_clear() -> dict:
+    """Clear the data cache. Returns info about cleared entries."""
+    size = _data_cache.size
+    _data_cache.clear()
+    return {"message": f"Cache cleared ({size} entries removed)"}
 
 
 @contextlib.contextmanager
@@ -194,32 +324,43 @@ def stock_history(
     start, end = _default_dates(start, end)
     sym = normalize_symbol(symbol, source)
 
-    if source == "jquants":
-        client = get_jquants_client()
-        if client is None:
-            return {"error": "J-Quants credentials not configured. Set JQUANTS_API_KEY or EMAIL/PASSWORD."}
-        result = _safe_call(_jq_get_prices, client, sym, start.replace("-", ""), end.replace("-", ""))
-        if isinstance(result, dict) and "error" in result:
-            return result
-        return _df_to_records(result)
-    elif source == "vnstocks":
-        vn_interval = _VN_INTERVAL_MAP.get(interval, "1D")
-        with _suppress_stdout():
-            stock = _safe_call(_vn_stock, sym)
-        if isinstance(stock, dict) and "error" in stock:
-            return stock
-        result = _safe_call(stock.quote.history, start=start, end=end, interval=vn_interval)
-        if isinstance(result, dict) and "error" in result:
-            return result
-        return _df_to_records(result)
-    else:
-        import yfinance as yf
+    # Check cache first
+    cache_args = (sym, start, end, interval, source)
+    hit, cached = _data_cache.get("stock_history", cache_args, {})
+    if hit:
+        return cached
 
-        ticker = yf.Ticker(sym)
-        result = _safe_call(ticker.history, start=start, end=end, interval=interval)
-        if isinstance(result, dict) and "error" in result:
-            return result
-        return _df_to_records(result)
+    with LogTimer(logger, "stock_history", symbol=sym, source=source):
+        if source == "jquants":
+            client = get_jquants_client()
+            if client is None:
+                return {"error": "J-Quants credentials not configured. Set JQUANTS_API_KEY or EMAIL/PASSWORD."}
+            result = _safe_call_with_retry(_jq_get_prices, client, sym, start.replace("-", ""), end.replace("-", ""))
+            if isinstance(result, dict) and "error" in result:
+                return result
+            records = _df_to_records(result)
+        elif source == "vnstocks":
+            vn_interval = _VN_INTERVAL_MAP.get(interval, "1D")
+            with _suppress_stdout():
+                stock = _safe_call(_vn_stock, sym)
+            if isinstance(stock, dict) and "error" in stock:
+                return stock
+            result = _safe_call_with_retry(stock.quote.history, start=start, end=end, interval=vn_interval)
+            if isinstance(result, dict) and "error" in result:
+                return result
+            records = _df_to_records(result)
+        else:
+            import yfinance as yf
+
+            ticker = yf.Ticker(sym)
+            result = _safe_call_with_retry(ticker.history, start=start, end=end, interval=interval)
+            if isinstance(result, dict) and "error" in result:
+                return result
+            records = _df_to_records(result)
+
+    # Cache the result
+    _data_cache.put("stock_history", cache_args, {}, records)
+    return records
 
 
 def stock_intraday(
@@ -872,7 +1013,8 @@ def fx_history(
 
     start, end = _default_dates(start, end)
     ticker = yf.Ticker(pair)
-    result = _safe_call(ticker.history, start=start, end=end, interval=interval)
+    with LogTimer(logger, "fx_history", symbol=pair):
+        result = _safe_call_with_retry(ticker.history, start=start, end=end, interval=interval)
     if isinstance(result, dict) and "error" in result:
         return result
     return _df_to_records(result)
@@ -895,7 +1037,8 @@ def crypto_history(
 
     start, end = _default_dates(start, end)
     ticker = yf.Ticker(symbol)
-    result = _safe_call(ticker.history, start=start, end=end, interval=interval)
+    with LogTimer(logger, "crypto_history", symbol=symbol):
+        result = _safe_call_with_retry(ticker.history, start=start, end=end, interval=interval)
     if isinstance(result, dict) and "error" in result:
         return result
     return _df_to_records(result)
@@ -919,7 +1062,8 @@ def world_index_history(
 
     start, end = _default_dates(start, end)
     ticker = yf.Ticker(symbol)
-    result = _safe_call(ticker.history, start=start, end=end, interval=interval)
+    with LogTimer(logger, "world_index_history", symbol=symbol):
+        result = _safe_call_with_retry(ticker.history, start=start, end=end, interval=interval)
     if isinstance(result, dict) and "error" in result:
         return result
     return _df_to_records(result)

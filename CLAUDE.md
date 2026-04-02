@@ -8,14 +8,15 @@ MCP server & CLI for Japanese and Vietnamese stock market data. Wraps **yfinance
 src/jpstock_agent/
   __init__.py     – version
   config.py       – env-based settings (pydantic-settings)
-  core.py         – all data functions (returns list[dict] | dict)
+  logging.py      – structured JSON logging, LogTimer, retry/cache observability
+  core.py         – all data functions with retry + caching (returns list[dict] | dict)
   ta.py           – technical analysis module (24 TA functions + 29 screening strategies)
   candlestick.py  – candlestick pattern detection (20 patterns)
   backtest.py     – backtesting engine (12 strategies, optimizer, walk-forward, Monte Carlo)
   portfolio.py    – portfolio optimization (Monte Carlo, risk analysis, correlation)
   sentiment.py    – sentiment analysis (news scoring, combined TA+sentiment signals)
-  server.py       – FastMCP tool definitions (67 tools)
-  cli.py          – Click CLI commands (70+ commands + serve)
+  server.py       – FastMCP tool definitions (65 tools)
+  cli.py          – Click CLI commands (56 commands + serve)
 ```
 
 ## Key Conventions
@@ -142,3 +143,28 @@ News-based sentiment scoring with English + Japanese keyword matching:
 - `sentiment_market` – batch sentiment for multiple stocks
 - `sentiment_combined` – combined TA (70%) + sentiment (30%) signal
 - `sentiment_screen` – screen stocks by sentiment threshold
+
+## Infrastructure (logging.py + core.py)
+
+### Structured Logging
+- `get_logger(name)` – returns JSON-formatted logger (outputs to stderr)
+- `LogTimer(logger, operation)` – context manager for timing + logging operations
+- All log entries include: timestamp, level, logger, message, and optional fields (symbol, source, duration_ms, error, retry_attempt, cache_hit)
+
+### Retry Logic
+- `_safe_call_with_retry(func, *args, max_attempts=3)` – exponential backoff retry
+- Retries on: `ConnectionError`, `TimeoutError`, `OSError`
+- Backoff delays: 0.5s → 1.0s → 2.0s
+- Non-retryable exceptions (ValueError, KeyError, etc.) fail immediately
+
+### Caching
+- `_TTLCache(maxsize=128, ttl=300)` – LRU cache with 5-minute TTL
+- `cache_clear()` – clear all cached entries
+- Applied to `stock_history()` for now; can be extended to other data functions
+- Cache key = hash of (function_name, args, kwargs)
+
+## Test Suite
+- 10 test files, 401 tests (3 skipped for ta library compat)
+- Overall coverage: 79%
+- Key module coverage: core 87%, backtest 88%, candlestick 91%, sentiment 97%, logging 98%
+- CI/CD: GitHub Actions with Python 3.10/3.11/3.12, ruff lint, pytest-cov (threshold 75%)
