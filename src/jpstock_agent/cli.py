@@ -15,7 +15,7 @@ from functools import wraps
 import click
 from tabulate import tabulate
 
-from . import backtest, candlestick, core, portfolio, sentiment, ta
+from . import backtest, candlestick, core, financial, ml, options, portfolio, sentiment, ta
 from .config import get_settings
 
 # ---------------------------------------------------------------------------
@@ -621,6 +621,40 @@ def cli_backtest_advanced(symbol, strategy, start, end, capital, source, fmt):
     click.echo(_format_output(data, fmt))
 
 
+@cli.command(name="backtest-realistic")
+@click.argument("symbol")
+@click.option("--strategy", "-st", default="sma_crossover",
+              help="Strategy: sma_crossover, ema_crossover, rsi_reversal, etc.")
+@click.option("--market", "-m", default="jp",
+              help="Cost preset: jp (Japanese), vn (Vietnamese), zero (no costs)")
+@click.option("--sizing", default="atr",
+              help="Position sizing: full, kelly, atr, max_loss, fixed_fraction")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--capital", default=1000000, type=float, help="Initial capital")
+@common_options
+def cli_backtest_realistic(symbol, strategy, market, sizing, start, end, capital, source, fmt):
+    """Backtest with realistic costs and position sizing."""
+    data = backtest.backtest_realistic(
+        symbol, strategy, market=market, position_sizing=sizing,
+        start=start, end=end, initial_capital=capital, source=source,
+    )
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="history-batch")
+@click.argument("symbols")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--interval", "-i", default="1d", help="Interval: 1d, 1wk, 1mo")
+@common_options
+def cli_history_batch(symbols, start, end, interval, source, fmt):
+    """Fetch OHLCV data for multiple symbols in parallel (comma-separated)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = core.stock_history_batch(sym_list, start, end, interval, source)
+    click.echo(_format_output(data, fmt))
+
+
 # ---------------------------------------------------------------------------
 # Portfolio Commands
 # ---------------------------------------------------------------------------
@@ -720,6 +754,190 @@ def cli_sentiment_screen(symbols, min_score, source, fmt):
     """Screen stocks by news sentiment."""
     sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
     data = sentiment.sentiment_screen(sym_list, min_score, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# ML Signal Generation Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="ml-predict")
+@click.argument("symbol")
+@click.option("--horizon", "-n", default=5, type=int, help="Prediction horizon in days (default 5)")
+@click.option("--model", "-m", default="random_forest",
+              help="Model: random_forest (default), gradient_boosting")
+@common_options
+def cli_ml_predict(symbol, horizon, model, source, fmt):
+    """ML price prediction: probability of price increase in next N days."""
+    data = ml.ml_predict(symbol, horizon, model, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ml-features")
+@click.argument("symbol")
+@click.option("--horizon", "-n", default=5, type=int, help="Prediction horizon in days (default 5)")
+@common_options
+def cli_ml_features(symbol, horizon, source, fmt):
+    """Rank TA indicators by predictive power (feature importance)."""
+    data = ml.ml_feature_importance(symbol, horizon, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ml-signal")
+@click.argument("symbol")
+@click.option("--horizon", "-n", default=5, type=int, help="Prediction horizon in days")
+@click.option("--ml-weight", default=0.5, type=float, help="ML weight 0.0-1.0 (default 0.5)")
+@common_options
+def cli_ml_signal(symbol, horizon, ml_weight, source, fmt):
+    """Combined ML + TA signal (configurable weight blend)."""
+    data = ml.ml_signal(symbol, horizon, ml_weight, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="ml-batch")
+@click.argument("symbols")
+@click.option("--horizon", "-n", default=5, type=int, help="Prediction horizon in days")
+@click.option("--model", "-m", default="random_forest", help="Model type")
+@common_options
+def cli_ml_batch(symbols, horizon, model, source, fmt):
+    """ML prediction for multiple symbols (comma-separated)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = ml.ml_batch_predict(sym_list, horizon, model, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Options & Derivatives Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="options-chain")
+@click.argument("symbol")
+@click.option("--expiry", "-e", default=None, help="Expiry date (YYYY-MM-DD)")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_options_chain(symbol, expiry, fmt):
+    """Fetch options chain (calls and puts)."""
+    data = options.options_chain(symbol, expiry)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="options-greeks")
+@click.argument("symbol")
+@click.option("--expiry", "-e", default=None, help="Expiry date (YYYY-MM-DD)")
+@click.option("--type", "-t", "option_type", default="call", help="call or put (default call)")
+@click.option("--rate", "-r", default=0.05, type=float, help="Risk-free rate (default 0.05)")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_options_greeks(symbol, expiry, option_type, rate, fmt):
+    """Calculate Black-Scholes Greeks (Delta, Gamma, Theta, Vega, Rho)."""
+    data = options.options_greeks(symbol, expiry, rate, option_type)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="options-iv")
+@click.argument("symbol")
+@click.option("--max-expiries", default=6, type=int, help="Max expiry dates (default 6)")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_options_iv(symbol, max_expiries, fmt):
+    """Build implied volatility surface with skew analysis."""
+    data = options.options_iv_surface(symbol, max_expiries)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="options-unusual")
+@click.argument("symbol")
+@click.option("--threshold", default=2.0, type=float, help="Volume/OI threshold (default 2.0)")
+@click.option("--expiry", "-e", default=None, help="Expiry date (YYYY-MM-DD)")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_options_unusual(symbol, threshold, expiry, fmt):
+    """Detect unusual options activity (high volume/OI)."""
+    data = options.options_unusual_activity(symbol, threshold, expiry)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="options-pcr")
+@click.argument("symbol")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_options_pcr(symbol, fmt):
+    """Put/call ratio sentiment indicator."""
+    data = options.options_put_call_ratio(symbol)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="options-maxpain")
+@click.argument("symbol")
+@click.option("--expiry", "-e", default=None, help="Expiry date (YYYY-MM-DD)")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_options_maxpain(symbol, expiry, fmt):
+    """Calculate max pain strike price."""
+    data = options.options_max_pain(symbol, expiry)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Fundamental Financial Analysis Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="fin-health")
+@click.argument("symbol")
+@click.option("--period", "-p", default="annual", help="annual or quarterly")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_fin_health(symbol, period, fmt):
+    """Financial health: Altman Z-score, Piotroski F-score, liquidity, leverage."""
+    data = financial.financial_health(symbol, period)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="fin-growth")
+@click.argument("symbol")
+@click.option("--period", "-p", default="annual", help="annual or quarterly")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_fin_growth(symbol, period, fmt):
+    """Growth trends: YoY revenue/earnings growth, margin trends."""
+    data = financial.financial_growth(symbol, period)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="fin-valuation")
+@click.argument("symbol")
+@click.option("--discount-rate", "-d", default=0.10, type=float, help="Discount rate (default 0.10)")
+@click.option("--terminal-growth", "-g", default=0.02, type=float, help="Terminal growth (default 0.02)")
+@click.option("--years", "-y", default=5, type=int, help="Projection years (default 5)")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_fin_valuation(symbol, discount_rate, terminal_growth, years, fmt):
+    """DCF valuation and relative valuation metrics."""
+    data = financial.financial_valuation(symbol, discount_rate, terminal_growth, years)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="fin-peers")
+@click.argument("symbols")
+@click.option("--period", "-p", default="annual", help="annual or quarterly")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_fin_peers(symbols, period, fmt):
+    """Peer comparison: side-by-side financial metrics (comma-separated symbols)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = financial.financial_peer_compare(sym_list, period)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="fin-dividend")
+@click.argument("symbol")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_fin_dividend(symbol, fmt):
+    """Dividend analysis: yield, payout ratio, growth, sustainability."""
+    data = financial.financial_dividend(symbol)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="fin-ratios")
+@click.argument("symbol")
+@click.option("--period", "-p", default="annual", help="annual or quarterly")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_fin_ratios(symbol, period, fmt):
+    """Compute financial ratios from raw statements (profitability, efficiency, DuPont)."""
+    data = financial.financial_ratios_calc(symbol, period)
     click.echo(_format_output(data, fmt))
 
 

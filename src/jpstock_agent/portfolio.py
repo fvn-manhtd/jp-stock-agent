@@ -15,6 +15,7 @@ Default lookback: 365 days.
 """
 
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union
 
@@ -24,6 +25,8 @@ import pandas as pd
 from .core import _safe_call
 from .ta import _get_ohlcv_df, _round_val
 
+_MAX_PARALLEL_WORKERS = 8
+
 
 def _get_returns_df(
     symbols: List[str],
@@ -32,12 +35,13 @@ def _get_returns_df(
     source: Optional[str] = None,
 ) -> Union[pd.DataFrame, Dict[str, str]]:
     """
-    Fetch OHLCV data for all symbols and return aligned daily returns DataFrame.
+    Fetch OHLCV data for all symbols in parallel and return aligned daily returns DataFrame.
 
     Columns: symbol names
     Index: date (daily)
     Values: daily returns (pct_change)
 
+    Uses ThreadPoolExecutor for parallel fetching when multiple symbols are provided.
     Symbols that fail to fetch are dropped with a warning.
     Returns {"error": str} if no valid symbols remain.
     """
@@ -54,8 +58,29 @@ def _get_returns_df(
     valid_symbols = []
     failed_symbols = []
 
-    for symbol in symbols:
+    def _fetch_symbol(symbol):
         result = _get_ohlcv_df(symbol, start=start, end=end, source=source)
+        return symbol, result
+
+    # Parallel fetch for multiple symbols, sequential for single
+    if len(symbols) == 1:
+        fetch_results = [_fetch_symbol(symbols[0])]
+    else:
+        fetch_results = []
+        n_workers = min(_MAX_PARALLEL_WORKERS, len(symbols))
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {executor.submit(_fetch_symbol, sym): sym for sym in symbols}
+            for future in as_completed(futures):
+                try:
+                    fetch_results.append(future.result())
+                except Exception as e:
+                    sym = futures[future]
+                    fetch_results.append((sym, {"error": str(e)}))
+
+    # Process results (maintain original symbol order)
+    results_map = {sym: res for sym, res in fetch_results}
+    for symbol in symbols:
+        result = results_map.get(symbol)
 
         if isinstance(result, dict) and "error" in result:
             failed_symbols.append(symbol)

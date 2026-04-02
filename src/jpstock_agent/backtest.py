@@ -6,6 +6,8 @@ Provides functions to:
 - Compare multiple strategies
 - Optimize strategy parameters
 - Walk-forward analysis for consistency checking
+- Realistic cost modeling (commission, slippage, spread)
+- Position sizing (Kelly Criterion, ATR-based, max loss per trade)
 """
 
 from datetime import datetime, timedelta
@@ -16,6 +18,173 @@ import pandas as pd
 
 from .core import _safe_call
 from .ta import _get_ohlcv_df, _round_val
+
+# ============================================================================
+# Transaction Cost Model
+# ============================================================================
+
+
+class CostModel:
+    """Model for realistic transaction costs.
+
+    Attributes:
+        commission_pct: Commission per trade as percentage of trade value (default 0.1% = 10bps).
+        slippage_pct: Market impact / slippage as percentage (default 0.05% = 5bps).
+        spread_pct: Bid-ask spread cost as percentage (default 0.03% = 3bps).
+        min_commission: Minimum commission per trade in currency units (default 0).
+    """
+
+    def __init__(
+        self,
+        commission_pct: float = 0.1,
+        slippage_pct: float = 0.05,
+        spread_pct: float = 0.03,
+        min_commission: float = 0.0,
+    ):
+        self.commission_pct = commission_pct / 100  # Convert to decimal
+        self.slippage_pct = slippage_pct / 100
+        self.spread_pct = spread_pct / 100
+        self.min_commission = min_commission
+
+    def total_cost_pct(self) -> float:
+        """Total one-way cost as decimal fraction."""
+        return self.commission_pct + self.slippage_pct + self.spread_pct
+
+    def apply_buy(self, price: float, capital: float) -> tuple:
+        """Apply costs to a buy order.
+
+        Returns:
+            (effective_price, commission_paid, shares_bought)
+        """
+        cost_pct = self.total_cost_pct()
+        effective_price = price * (1 + cost_pct)
+        commission = max(capital * self.commission_pct, self.min_commission)
+        available = capital - commission
+        shares = available / effective_price if effective_price > 0 else 0
+        return effective_price, commission, shares
+
+    def apply_sell(self, price: float, shares: float) -> tuple:
+        """Apply costs to a sell order.
+
+        Returns:
+            (effective_price, commission_paid, proceeds)
+        """
+        cost_pct = self.total_cost_pct()
+        effective_price = price * (1 - cost_pct)
+        gross = shares * effective_price
+        commission = max(gross * self.commission_pct, self.min_commission)
+        proceeds = gross - commission
+        return effective_price, commission, proceeds
+
+    def to_dict(self) -> dict:
+        """Serialize cost model parameters."""
+        return {
+            "commission_pct": _round_val(self.commission_pct * 100, 4),
+            "slippage_pct": _round_val(self.slippage_pct * 100, 4),
+            "spread_pct": _round_val(self.spread_pct * 100, 4),
+            "min_commission": self.min_commission,
+            "total_one_way_cost_pct": _round_val(self.total_cost_pct() * 100, 4),
+        }
+
+
+# Default: zero costs (backward compatible)
+NO_COSTS = CostModel(commission_pct=0, slippage_pct=0, spread_pct=0)
+
+# Realistic defaults for Japanese market
+JP_MARKET_COSTS = CostModel(commission_pct=0.1, slippage_pct=0.05, spread_pct=0.03)
+
+# Realistic defaults for Vietnamese market
+VN_MARKET_COSTS = CostModel(commission_pct=0.15, slippage_pct=0.1, spread_pct=0.05)
+
+
+# ============================================================================
+# Position Sizing Strategies
+# ============================================================================
+
+
+def _position_size_full(capital: float, price: float, **kwargs) -> float:
+    """Full position: invest all available capital (default, backward compatible)."""
+    return capital / price if price > 0 else 0
+
+
+def _position_size_kelly(
+    capital: float, price: float, win_rate: float = 0.5, avg_win: float = 1.0, avg_loss: float = 1.0, **kwargs
+) -> float:
+    """Kelly Criterion position sizing.
+
+    f* = (win_rate / avg_loss) - ((1 - win_rate) / avg_win)
+    Capped at [0, 1] to prevent over-leverage.
+    Uses half-Kelly for safety.
+    """
+    if avg_win <= 0 or avg_loss <= 0:
+        return capital / price if price > 0 else 0
+
+    kelly_f = (win_rate * avg_win - (1 - win_rate) * avg_loss) / (avg_win * avg_loss)
+    # Half-Kelly for safety, capped at [0, 1]
+    fraction = max(0.0, min(1.0, kelly_f * 0.5))
+    investable = capital * fraction
+    return investable / price if price > 0 else 0
+
+
+def _position_size_atr(
+    capital: float, price: float, atr: float = 0.0, risk_per_trade: float = 0.02, atr_multiplier: float = 2.0,
+    **kwargs,
+) -> float:
+    """ATR-based position sizing.
+
+    Determines position size so that a move of atr_multiplier * ATR
+    risks only risk_per_trade fraction of capital.
+    """
+    if atr <= 0 or price <= 0:
+        return capital / price if price > 0 else 0
+
+    risk_amount = capital * risk_per_trade
+    stop_distance = atr * atr_multiplier
+    shares = risk_amount / stop_distance
+    # Cap at max affordable
+    max_shares = capital / price
+    return min(shares, max_shares)
+
+
+def _position_size_max_loss(
+    capital: float, price: float, max_loss_pct: float = 0.02, stop_loss_pct: float = 0.05, **kwargs
+) -> float:
+    """Max loss per trade position sizing.
+
+    Limits position so that hitting stop loss costs at most max_loss_pct of capital.
+    """
+    if price <= 0 or stop_loss_pct <= 0:
+        return capital / price if price > 0 else 0
+
+    risk_amount = capital * max_loss_pct
+    loss_per_share = price * stop_loss_pct
+    shares = risk_amount / loss_per_share
+    # Cap at max affordable
+    max_shares = capital / price
+    return min(shares, max_shares)
+
+
+def _position_size_fixed_fraction(
+    capital: float, price: float, fraction: float = 0.5, **kwargs
+) -> float:
+    """Fixed fraction: invest a fixed percentage of capital."""
+    fraction = max(0.0, min(1.0, fraction))
+    investable = capital * fraction
+    return investable / price if price > 0 else 0
+
+
+POSITION_SIZERS = {
+    "full": _position_size_full,
+    "kelly": _position_size_kelly,
+    "atr": _position_size_atr,
+    "max_loss": _position_size_max_loss,
+    "fixed_fraction": _position_size_fixed_fraction,
+}
+
+
+def _get_position_sizer(method: str):
+    """Return the position sizing function for the given method name."""
+    return POSITION_SIZERS.get(method, _position_size_full)
 
 # ============================================================================
 # Main API Functions
@@ -29,6 +198,15 @@ def backtest_strategy(
     end: Optional[str] = None,
     initial_capital: float = 1_000_000,
     source: Optional[str] = None,
+    commission_pct: float = 0.0,
+    slippage_pct: float = 0.0,
+    spread_pct: float = 0.0,
+    min_commission: float = 0.0,
+    position_sizing: str = "full",
+    risk_per_trade: float = 0.02,
+    max_loss_pct: float = 0.02,
+    stop_loss_pct: float = 0.05,
+    fraction: float = 0.5,
     **params,
 ) -> Union[dict, list]:
     """
@@ -41,6 +219,16 @@ def backtest_strategy(
         end: End date (YYYY-MM-DD), default today
         initial_capital: Starting capital in JPY (default 1,000,000)
         source: Data source (yfinance, jquants, vnstocks)
+        commission_pct: Commission per trade in % (default 0 = no cost)
+        slippage_pct: Slippage per trade in % (default 0)
+        spread_pct: Bid-ask spread in % (default 0)
+        min_commission: Minimum commission per trade in currency (default 0)
+        position_sizing: Position sizing method: "full", "kelly", "atr",
+                         "max_loss", "fixed_fraction" (default "full")
+        risk_per_trade: Risk per trade as fraction of capital (for ATR sizing, default 0.02)
+        max_loss_pct: Max loss per trade as fraction of capital (for max_loss sizing, default 0.02)
+        stop_loss_pct: Stop loss distance as fraction of price (for max_loss sizing, default 0.05)
+        fraction: Fraction of capital to invest (for fixed_fraction sizing, default 0.5)
         **params: Additional strategy parameters (overrides defaults)
 
     Returns:
@@ -51,6 +239,9 @@ def backtest_strategy(
         - max_drawdown_pct, sharpe_ratio
         - avg_trade_return_pct, best_trade_pct, worst_trade_pct
         - buy_hold_return_pct, alpha_pct
+        - cost_model: transaction cost parameters used
+        - total_costs_paid: total commissions/fees paid
+        - position_sizing: position sizing method used
         - trades: list of individual trades
     """
 
@@ -62,6 +253,23 @@ def backtest_strategy(
         else:
             start_date = start
 
+        # Build cost model
+        cost_model = CostModel(
+            commission_pct=commission_pct,
+            slippage_pct=slippage_pct,
+            spread_pct=spread_pct,
+            min_commission=min_commission,
+        )
+
+        # Get position sizer
+        sizer = _get_position_sizer(position_sizing)
+        sizing_params = {
+            "risk_per_trade": risk_per_trade,
+            "max_loss_pct": max_loss_pct,
+            "stop_loss_pct": stop_loss_pct,
+            "fraction": fraction,
+        }
+
         # Fetch OHLCV data
         df = _get_ohlcv_df(symbol, start=start_date, end=end_date, source=source)
         if df is None or df.empty:
@@ -72,8 +280,11 @@ def backtest_strategy(
         if signals_df is None:
             return {"error": f"Failed to generate signals for strategy {strategy}"}
 
-        # Execute trades based on signals
-        trades, final_capital = _execute_trades(signals_df, initial_capital)
+        # Execute trades based on signals with cost model & position sizing
+        trades, final_capital, total_costs = _execute_trades(
+            signals_df, initial_capital, cost_model=cost_model,
+            position_sizer=sizer, sizing_params=sizing_params,
+        )
 
         # Calculate metrics
         metrics = _calculate_metrics(
@@ -86,6 +297,12 @@ def backtest_strategy(
             start_date,
             end_date,
         )
+
+        # Add cost & sizing info
+        metrics["cost_model"] = cost_model.to_dict()
+        metrics["total_costs_paid"] = _round_val(total_costs, 2)
+        metrics["position_sizing"] = position_sizing
+
         return metrics
 
     return _safe_call(_backtest)
@@ -269,7 +486,7 @@ def backtest_walk_forward(
                 current += timedelta(days=step)
                 continue
 
-            trades, final_capital = _execute_trades(signals_df, initial_capital)
+            trades, final_capital, _ = _execute_trades(signals_df, initial_capital)
             all_trades.extend(trades)
 
             window_results.append(
@@ -582,6 +799,82 @@ def backtest_advanced_metrics(
     return _safe_call(_advanced_metrics)
 
 
+def backtest_realistic(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    market: str = "jp",
+    position_sizing: str = "atr",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    initial_capital: float = 1_000_000,
+    source: Optional[str] = None,
+    **params,
+) -> dict:
+    """
+    Backtest with realistic market costs and position sizing pre-configured.
+
+    Convenience wrapper around backtest_strategy that applies market-appropriate
+    transaction costs and ATR-based position sizing by default.
+
+    Args:
+        symbol: Stock ticker code
+        strategy: Strategy name (default sma_crossover)
+        market: Market preset: "jp" (Japanese), "vn" (Vietnamese), "zero" (no costs)
+        position_sizing: Position sizing method: "full", "kelly", "atr",
+                         "max_loss", "fixed_fraction" (default "atr")
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        initial_capital: Starting capital
+        source: Data source
+        **params: Additional strategy parameters
+
+    Returns:
+        dict with all backtest_strategy fields plus cost_model, total_costs_paid,
+        position_sizing, and comparison vs zero-cost backtest.
+    """
+    market_costs = {
+        "jp": {"commission_pct": 0.1, "slippage_pct": 0.05, "spread_pct": 0.03},
+        "vn": {"commission_pct": 0.15, "slippage_pct": 0.1, "spread_pct": 0.05},
+        "zero": {"commission_pct": 0.0, "slippage_pct": 0.0, "spread_pct": 0.0},
+    }
+
+    costs = market_costs.get(market, market_costs["jp"])
+
+    result = backtest_strategy(
+        symbol,
+        strategy,
+        start=start,
+        end=end,
+        initial_capital=initial_capital,
+        source=source,
+        position_sizing=position_sizing,
+        **costs,
+        **params,
+    )
+
+    if isinstance(result, dict) and "error" not in result:
+        # Also run zero-cost for comparison
+        zero_result = backtest_strategy(
+            symbol,
+            strategy,
+            start=start,
+            end=end,
+            initial_capital=initial_capital,
+            source=source,
+            **params,
+        )
+        if isinstance(zero_result, dict) and "error" not in zero_result:
+            result["comparison_vs_zero_cost"] = {
+                "zero_cost_return_pct": zero_result.get("total_return_pct", 0),
+                "realistic_return_pct": result.get("total_return_pct", 0),
+                "cost_impact_pct": _round_val(
+                    zero_result.get("total_return_pct", 0) - result.get("total_return_pct", 0), 2
+                ),
+            }
+
+    return result
+
+
 # ============================================================================
 # Internal Helpers
 # ============================================================================
@@ -761,53 +1054,112 @@ def _generate_signals(
 
 
 def _execute_trades(
-    signals_df: pd.DataFrame, initial_capital: float
-) -> tuple[list, float]:
+    signals_df: pd.DataFrame,
+    initial_capital: float,
+    cost_model: Optional[CostModel] = None,
+    position_sizer=None,
+    sizing_params: Optional[dict] = None,
+) -> tuple[list, float, float]:
     """
-    Execute trades based on signals.
+    Execute trades based on signals with optional cost model and position sizing.
 
     Args:
         signals_df: DataFrame with 'signal' column (1=buy, -1=sell, 0=hold)
         initial_capital: Starting capital
+        cost_model: CostModel instance (default: NO_COSTS)
+        position_sizer: Position sizing function (default: full position)
+        sizing_params: Extra params for position sizer
 
     Returns:
-        tuple: (trades list, final capital)
+        tuple: (trades list, final capital, total costs paid)
     """
+    if cost_model is None:
+        cost_model = NO_COSTS
+    if position_sizer is None:
+        position_sizer = _position_size_full
+    if sizing_params is None:
+        sizing_params = {}
 
     trades = []
     capital = initial_capital
+    total_costs = 0.0
     position = None  # None or (shares, entry_price, entry_date)
+
+    # Track historical trades for Kelly sizing
+    completed_trades = []
+
+    # Pre-compute ATR if needed for ATR-based sizing
+    atr_series = None
+    if position_sizer == _position_size_atr and "high" in signals_df.columns:
+        atr_series = _calculate_atr(signals_df, 14)
 
     for i, row in signals_df.iterrows():
         signal = row["signal"]
         price = row["close"]
 
         if signal == 1 and position is None:
-            # Buy signal and not in position
-            shares = capital / price
-            position = (shares, price, i)
+            # Build sizing kwargs
+            sz_kwargs = dict(sizing_params)
+            if atr_series is not None and i in atr_series.index:
+                atr_val = atr_series.loc[i]
+                if pd.notna(atr_val):
+                    sz_kwargs["atr"] = float(atr_val)
+
+            # For Kelly: use historical win rate & avg win/loss
+            if position_sizer == _position_size_kelly and completed_trades:
+                wins = [t for t in completed_trades if t > 0]
+                losses = [t for t in completed_trades if t < 0]
+                sz_kwargs["win_rate"] = len(wins) / len(completed_trades) if completed_trades else 0.5
+                sz_kwargs["avg_win"] = abs(np.mean(wins)) / 100 if wins else 0.01
+                sz_kwargs["avg_loss"] = abs(np.mean(losses)) / 100 if losses else 0.01
+
+            # Calculate position size
+            shares = position_sizer(capital, price, **sz_kwargs)
+            if shares <= 0:
+                continue
+
+            # Apply buy costs
+            eff_price, commission, actual_shares = cost_model.apply_buy(price, shares * price)
+            # Re-calc shares from investable amount after costs
+            investable = min(shares * price, capital) - commission
+            if investable <= 0:
+                continue
+            actual_shares = investable / eff_price if eff_price > 0 else 0
+            total_costs += commission + (eff_price - price) * actual_shares
+
+            position = (actual_shares, eff_price, i)
             trades.append(
                 {
                     "date": str(i.date()),
                     "action": "BUY",
                     "price": _round_val(price, 2),
-                    "shares": _round_val(shares, 4),
+                    "effective_price": _round_val(eff_price, 2),
+                    "shares": _round_val(actual_shares, 4),
                     "capital": _round_val(capital, 2),
+                    "commission": _round_val(commission, 2),
                 }
             )
+            capital -= actual_shares * eff_price + commission
 
         elif signal == -1 and position is not None:
             # Sell signal and in position
             shares, entry_price, entry_date = position
-            capital = shares * price
-            trade_return = ((price - entry_price) / entry_price) * 100
+            eff_price, commission, proceeds = cost_model.apply_sell(price, shares)
+            total_costs += commission + (price - eff_price) * shares
+
+            trade_return = ((eff_price - entry_price) / entry_price) * 100
+            capital += proceeds
+            completed_trades.append(trade_return)
+
             trades.append(
                 {
                     "date": str(i.date()),
                     "action": "SELL",
                     "price": _round_val(price, 2),
+                    "effective_price": _round_val(eff_price, 2),
                     "shares": _round_val(shares, 4),
                     "capital": _round_val(capital, 2),
+                    "commission": _round_val(commission, 2),
                     "return_pct": _round_val(trade_return, 2),
                 }
             )
@@ -817,20 +1169,26 @@ def _execute_trades(
     if position is not None:
         shares, entry_price, entry_date = position
         last_price = signals_df.iloc[-1]["close"]
-        capital = shares * last_price
-        trade_return = ((last_price - entry_price) / entry_price) * 100
+        eff_price, commission, proceeds = cost_model.apply_sell(last_price, shares)
+        total_costs += commission + (last_price - eff_price) * shares
+
+        trade_return = ((eff_price - entry_price) / entry_price) * 100
+        capital += proceeds
+
         trades.append(
             {
                 "date": str(signals_df.index[-1].date()),
                 "action": "SELL",
                 "price": _round_val(last_price, 2),
+                "effective_price": _round_val(eff_price, 2),
                 "shares": _round_val(shares, 4),
                 "capital": _round_val(capital, 2),
+                "commission": _round_val(commission, 2),
                 "return_pct": _round_val(trade_return, 2),
             }
         )
 
-    return trades, capital
+    return trades, capital, total_costs
 
 
 def _calculate_metrics(

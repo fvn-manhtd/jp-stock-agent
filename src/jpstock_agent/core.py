@@ -249,6 +249,115 @@ def cache_clear() -> dict:
     return {"message": f"Cache cleared ({size} entries removed)"}
 
 
+def _cached_call(func_name: str, func, *args, **kwargs):
+    """Execute func with caching: check cache first, store result on miss."""
+    cache_args = args
+    hit, cached = _data_cache.get(func_name, cache_args, kwargs)
+    if hit:
+        return cached
+    result = func(*args, **kwargs)
+    if not (isinstance(result, dict) and "error" in result):
+        _data_cache.put(func_name, cache_args, kwargs, result)
+    return result
+
+
+def with_cache(func):
+    """Decorator that adds TTL caching to a data function."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return _cached_call(func.__name__, func, *args, **kwargs)
+    # Preserve original for testing
+    wrapper._original = func
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
+# Parallel data fetching
+# ---------------------------------------------------------------------------
+
+_MAX_PARALLEL_WORKERS = 8
+
+
+def fetch_parallel(
+    symbols: list[str],
+    fetch_func,
+    *args,
+    max_workers: int = _MAX_PARALLEL_WORKERS,
+    **kwargs,
+) -> dict[str, any]:
+    """Fetch data for multiple symbols in parallel using ThreadPoolExecutor.
+
+    Args:
+        symbols: List of stock ticker codes.
+        fetch_func: Function to call for each symbol (first arg must be symbol).
+        *args: Additional positional args passed to fetch_func after symbol.
+        max_workers: Maximum parallel threads (default 8).
+        **kwargs: Additional keyword args passed to fetch_func.
+
+    Returns:
+        dict mapping symbol -> result (list[dict] or {"error": str}).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not symbols:
+        return {}
+
+    results = {}
+
+    def _fetch_one(sym):
+        return sym, fetch_func(sym, *args, **kwargs)
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(symbols))) as executor:
+        futures = {executor.submit(_fetch_one, sym): sym for sym in symbols}
+        for future in as_completed(futures):
+            try:
+                sym, result = future.result()
+                results[sym] = result
+            except Exception as e:
+                sym = futures[future]
+                results[sym] = {"error": f"{type(e).__name__}: {e}"}
+
+    return results
+
+
+def stock_history_batch(
+    symbols: list[str],
+    start: str | None = None,
+    end: str | None = None,
+    interval: str = "1d",
+    source: str | None = None,
+    max_workers: int = _MAX_PARALLEL_WORKERS,
+) -> dict[str, list[dict] | dict]:
+    """Fetch OHLCV data for multiple symbols in parallel.
+
+    Args:
+        symbols: List of ticker codes.
+        start, end: Date range (YYYY-MM-DD).
+        interval: Price interval.
+        source: Data source override.
+        max_workers: Max parallel threads.
+
+    Returns:
+        dict mapping symbol -> OHLCV records or error dict.
+    """
+    return fetch_parallel(
+        symbols, stock_history,
+        start=start, end=end, interval=interval, source=source,
+        max_workers=max_workers,
+    )
+
+
+def company_overview_batch(
+    symbols: list[str],
+    source: str | None = None,
+    max_workers: int = _MAX_PARALLEL_WORKERS,
+) -> dict[str, dict]:
+    """Fetch company overviews for multiple symbols in parallel."""
+    return fetch_parallel(symbols, company_overview, source=source, max_workers=max_workers)
+
+
 @contextlib.contextmanager
 def _suppress_stdout():
     """Temporarily suppress stdout (some libraries print verbose output)."""
@@ -437,6 +546,7 @@ def stock_price_depth(
 # ---------------------------------------------------------------------------
 
 
+@with_cache
 def company_overview(
     symbol: str,
     source: str | None = None,
@@ -549,6 +659,7 @@ def company_officers(
         return officers if officers else {"message": "No officer data available for this symbol."}
 
 
+@with_cache
 def company_news(
     symbol: str,
     source: str | None = None,
@@ -737,6 +848,7 @@ def financial_cash_flow(
         return _df_to_records(cf)
 
 
+@with_cache
 def financial_ratio(
     symbol: str,
     source: str | None = None,
@@ -996,6 +1108,7 @@ def trading_price_board(
 # ---------------------------------------------------------------------------
 
 
+@with_cache
 def fx_history(
     pair: str = "USDJPY=X",
     start: str | None = None,
@@ -1020,6 +1133,7 @@ def fx_history(
     return _df_to_records(result)
 
 
+@with_cache
 def crypto_history(
     symbol: str = "BTC-JPY",
     start: str | None = None,
@@ -1044,6 +1158,7 @@ def crypto_history(
     return _df_to_records(result)
 
 
+@with_cache
 def world_index_history(
     symbol: str = "^N225",
     start: str | None = None,

@@ -12,7 +12,7 @@ import json
 
 from fastmcp import FastMCP
 
-from . import backtest, candlestick, core, portfolio, sentiment, ta
+from . import backtest, candlestick, core, financial, ml, options, portfolio, sentiment, ta
 from .config import get_settings
 
 app = FastMCP(
@@ -1125,6 +1125,62 @@ def backtest_advanced_metrics(
     return json.dumps(result, default=str, ensure_ascii=False)
 
 
+@app.tool()
+def backtest_realistic(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    market: str = "jp",
+    position_sizing: str = "atr",
+    start: str | None = None,
+    end: str | None = None,
+    initial_capital: float = 1000000,
+    source: str | None = None,
+) -> str:
+    """Backtest with realistic transaction costs and position sizing.
+
+    Uses market-appropriate costs (commission, slippage, spread) and
+    configurable position sizing. Also compares against zero-cost backtest.
+
+    Args:
+        symbol: Ticker code, e.g. "7203".
+        strategy: Strategy name (sma_crossover, ema_crossover, etc.).
+        market: Cost preset: "jp" (Japanese, default), "vn" (Vietnamese), "zero".
+        position_sizing: "full" (all-in), "kelly" (Kelly Criterion),
+                         "atr" (ATR-based, default), "max_loss", "fixed_fraction".
+        start: Start date (YYYY-MM-DD). Defaults to 1 year ago.
+        end: End date (YYYY-MM-DD).
+        initial_capital: Starting capital (default 1,000,000).
+        source: Data source override.
+    """
+    result = backtest.backtest_realistic(
+        symbol, strategy, market=market, position_sizing=position_sizing,
+        start=start, end=end, initial_capital=initial_capital, source=source,
+    )
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def stock_history_batch(
+    symbols: str,
+    start: str | None = None,
+    end: str | None = None,
+    interval: str = "1d",
+    source: str | None = None,
+) -> str:
+    """Fetch OHLCV data for multiple symbols in parallel (much faster than sequential).
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        start: Start date (YYYY-MM-DD). Defaults to 90 days ago.
+        end: End date (YYYY-MM-DD).
+        interval: "1d", "1wk", "1mo".
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = core.stock_history_batch(sym_list, start, end, interval, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------------------
 # Portfolio Optimization Tools
 # ---------------------------------------------------------------------------
@@ -1290,6 +1346,302 @@ def sentiment_screen(
     """
     sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
     result = sentiment.sentiment_screen(sym_list, min_score, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# ML Signal Generation Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def ml_predict(
+    symbol: str,
+    horizon: int = 5,
+    model_type: str = "random_forest",
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """ML price prediction: probability of price increase in next N days.
+
+    Uses Random Forest or Gradient Boosting trained on 30+ TA features.
+
+    Args:
+        symbol: Ticker code, e.g. "7203" or "AAPL".
+        horizon: Prediction horizon in trading days (default 5).
+        model_type: "random_forest" (default) or "gradient_boosting".
+        start: Training start date (YYYY-MM-DD). Default: 2 years ago.
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    result = ml.ml_predict(symbol, horizon, model_type, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ml_feature_importance(
+    symbol: str,
+    horizon: int = 5,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Rank TA indicators by predictive power using Random Forest feature importance.
+
+    Helps identify which indicators matter most for a specific stock.
+
+    Args:
+        symbol: Ticker code.
+        horizon: Prediction horizon in days (default 5).
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    result = ml.ml_feature_importance(symbol, horizon, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ml_signal(
+    symbol: str,
+    horizon: int = 5,
+    ml_weight: float = 0.5,
+    source: str | None = None,
+) -> str:
+    """Combined ML + TA signal with configurable weighting.
+
+    Blends ML prediction probability with multi-indicator TA score.
+
+    Args:
+        symbol: Ticker code.
+        horizon: ML prediction horizon in days (default 5).
+        ml_weight: Weight for ML signal 0.0-1.0 (default 0.5). TA = 1 - ml_weight.
+        source: Data source override.
+    """
+    result = ml.ml_signal(symbol, horizon, ml_weight, source=source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def ml_batch_predict(
+    symbols: str,
+    horizon: int = 5,
+    model_type: str = "random_forest",
+    source: str | None = None,
+) -> str:
+    """ML prediction for multiple symbols, sorted by probability of increase.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        horizon: Prediction horizon in days (default 5).
+        model_type: "random_forest" or "gradient_boosting".
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = ml.ml_batch_predict(sym_list, horizon, model_type, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Options & Derivatives Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def options_chain(
+    symbol: str,
+    expiry: str | None = None,
+) -> str:
+    """Fetch options chain (calls and puts) with IV, volume, open interest.
+
+    Args:
+        symbol: Ticker code (mainly US stocks, e.g. "AAPL", "MSFT").
+        expiry: Specific expiry date (YYYY-MM-DD). Default: nearest expiry.
+    """
+    result = options.options_chain(symbol, expiry)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def options_greeks(
+    symbol: str,
+    expiry: str | None = None,
+    option_type: str = "call",
+    risk_free_rate: float = 0.05,
+) -> str:
+    """Calculate Black-Scholes Greeks (Delta, Gamma, Theta, Vega, Rho).
+
+    Args:
+        symbol: Ticker code.
+        expiry: Expiry date (YYYY-MM-DD). Default: nearest expiry.
+        option_type: "call" (default) or "put".
+        risk_free_rate: Annual risk-free rate (default 0.05 = 5%).
+    """
+    result = options.options_greeks(symbol, expiry, risk_free_rate, option_type)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def options_iv_surface(
+    symbol: str,
+    max_expiries: int = 6,
+) -> str:
+    """Build implied volatility surface (strike × expiry) with skew analysis.
+
+    Args:
+        symbol: Ticker code.
+        max_expiries: Maximum expiry dates to include (default 6).
+    """
+    result = options.options_iv_surface(symbol, max_expiries)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def options_unusual_activity(
+    symbol: str,
+    volume_threshold: float = 2.0,
+    expiry: str | None = None,
+) -> str:
+    """Detect unusual options activity (high volume/OI ratio).
+
+    Args:
+        symbol: Ticker code.
+        volume_threshold: Volume/OI ratio threshold (default 2.0).
+        expiry: Specific expiry date. Default: nearest expiry.
+    """
+    result = options.options_unusual_activity(symbol, volume_threshold, expiry)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def options_put_call_ratio(
+    symbol: str,
+) -> str:
+    """Put/call ratio sentiment indicator across all expiries.
+
+    P/C > 1.0 = bearish, P/C < 0.7 = bullish.
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = options.options_put_call_ratio(symbol)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def options_max_pain(
+    symbol: str,
+    expiry: str | None = None,
+) -> str:
+    """Calculate max pain strike price (where option sellers face minimum payout).
+
+    Args:
+        symbol: Ticker code.
+        expiry: Expiry date (YYYY-MM-DD). Default: nearest expiry.
+    """
+    result = options.options_max_pain(symbol, expiry)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Fundamental Financial Analysis Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def financial_health(
+    symbol: str,
+    period: str = "annual",
+) -> str:
+    """Financial health assessment: Altman Z-score, Piotroski F-score, liquidity, leverage.
+
+    Args:
+        symbol: Ticker code, e.g. "7203" or "ACB".
+        period: "annual" or "quarterly".
+    """
+    result = financial.financial_health(symbol, period)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def financial_growth(
+    symbol: str,
+    period: str = "annual",
+) -> str:
+    """Growth trend analysis: YoY revenue/earnings growth, margin trends, FCF trends.
+
+    Args:
+        symbol: Ticker code.
+        period: "annual" or "quarterly".
+    """
+    result = financial.financial_growth(symbol, period)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def financial_valuation(
+    symbol: str,
+    discount_rate: float = 0.10,
+    terminal_growth: float = 0.02,
+    projection_years: int = 5,
+) -> str:
+    """Intrinsic value estimate using DCF and relative valuation (P/E, EV/EBITDA).
+
+    Args:
+        symbol: Ticker code.
+        discount_rate: WACC / required return (default 0.10 = 10%).
+        terminal_growth: Perpetual growth rate (default 0.02 = 2%).
+        projection_years: FCF projection horizon (default 5).
+    """
+    result = financial.financial_valuation(symbol, discount_rate, terminal_growth, projection_years)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def financial_peer_compare(
+    symbols: str,
+    period: str = "annual",
+) -> str:
+    """Side-by-side financial comparison of multiple stocks.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        period: "annual" or "quarterly".
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = financial.financial_peer_compare(sym_list, period)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def financial_dividend(
+    symbol: str,
+) -> str:
+    """Dividend analysis: yield, payout ratio, growth rate, sustainability check.
+
+    Args:
+        symbol: Ticker code.
+    """
+    result = financial.financial_dividend(symbol)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def financial_ratios_calc(
+    symbol: str,
+    period: str = "annual",
+) -> str:
+    """Compute financial ratios from raw statements (profitability, efficiency, leverage, DuPont).
+
+    Unlike the pre-calculated ratios from yfinance, this computes ratios directly
+    from balance sheet and income statement data.
+
+    Args:
+        symbol: Ticker code.
+        period: "annual" or "quarterly".
+    """
+    result = financial.financial_ratios_calc(symbol, period)
     return json.dumps(result, default=str, ensure_ascii=False)
 
 
