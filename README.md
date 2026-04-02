@@ -81,8 +81,14 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "jpstock": {
-      "command": "jpstock-agent",
-      "args": ["serve"]
+      "command": "/opt/homebrew/bin/jpstock-agent",
+      "args": [
+        "serve"
+      ],
+      "env": {        
+        "JPSTOCK_DEFAULT_SOURCE": "yfinance",
+        "VNSTOCK_API_KEY": "[ENCRYPTION_KEY]" // add vnstock api key for Vietnam stock https://vnstocks.com/
+      }
     }
   }
 }
@@ -98,7 +104,11 @@ Add to `.cursor/mcp.json`:
     "jpstock": {
       "command": "jpstock-agent",
       "args": ["serve"],
-      "transport": "stdio"
+      "transport": "stdio",
+      "env": {
+        "JPSTOCK_DEFAULT_SOURCE": "yfinance",
+        "VNSTOCK_API_KEY": "[ENCRYPTION_KEY]" // add vnstock api key for Vietnam stock https://vnstocks.com/
+      }
     }
   }
 }
