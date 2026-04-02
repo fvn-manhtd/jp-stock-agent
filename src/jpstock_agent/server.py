@@ -12,7 +12,7 @@ import json
 
 from fastmcp import FastMCP
 
-from . import core, ta, candlestick, backtest
+from . import core, ta, candlestick, backtest, portfolio, sentiment
 from .config import get_settings
 
 app = FastMCP(
@@ -1072,6 +1072,224 @@ def backtest_walk_forward(
         source: Data source override.
     """
     result = backtest.backtest_walk_forward(symbol, strategy, window, step, start, end, initial_capital, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def backtest_monte_carlo(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    num_simulations: int = 1000,
+    start: str | None = None,
+    end: str | None = None,
+    initial_capital: float = 1000000,
+    source: str | None = None,
+) -> str:
+    """Monte Carlo simulation for backtest strategy robustness testing.
+
+    Randomly resamples trade returns to estimate probability distributions.
+
+    Args:
+        symbol: Ticker code.
+        strategy: Strategy to simulate.
+        num_simulations: Number of simulations (default 1000).
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        initial_capital: Starting capital.
+        source: Data source override.
+    """
+    result = backtest.backtest_monte_carlo(symbol, strategy, num_simulations, start, end, initial_capital, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def backtest_advanced_metrics(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    start: str | None = None,
+    end: str | None = None,
+    initial_capital: float = 1000000,
+    source: str | None = None,
+) -> str:
+    """Advanced backtest metrics: Sortino, Calmar, profit factor, expectancy.
+
+    Args:
+        symbol: Ticker code.
+        strategy: Strategy name.
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        initial_capital: Starting capital.
+        source: Data source override.
+    """
+    result = backtest.backtest_advanced_metrics(symbol, strategy, start, end, initial_capital, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Portfolio Optimization Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def portfolio_analyze(
+    symbols: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Analyze a portfolio: per-stock returns, volatility, correlations.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        start: Start date (YYYY-MM-DD). Defaults to 1 year ago.
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = portfolio.portfolio_analyze(sym_list, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def portfolio_optimize(
+    symbols: str,
+    num_portfolios: int = 5000,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Monte Carlo portfolio optimization to find optimal weight allocation.
+
+    Finds max Sharpe ratio, min volatility, and max return portfolios.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        num_portfolios: Number of random portfolios to simulate (default 5000).
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = portfolio.portfolio_optimize(sym_list, start, end, num_portfolios, source=source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def portfolio_risk(
+    symbols: str,
+    weights: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Portfolio risk analysis: VaR, CVaR, Sortino, max drawdown.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        weights: Comma-separated weights, e.g. "0.5,0.3,0.2". Default: equal weight.
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    w_list = None
+    if weights:
+        w_list = [float(w.strip()) for w in weights.split(",") if w.strip()]
+    result = portfolio.portfolio_risk(sym_list, w_list, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def portfolio_correlation(
+    symbols: str,
+    start: str | None = None,
+    end: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Correlation and covariance matrix for a set of stocks.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        start: Start date (YYYY-MM-DD).
+        end: End date (YYYY-MM-DD).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = portfolio.portfolio_correlation(sym_list, start, end, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Sentiment Analysis Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def sentiment_news(
+    symbol: str,
+    source: str | None = None,
+) -> str:
+    """Analyze sentiment from recent news headlines for a stock.
+
+    Scores each headline from -1 (very bearish) to +1 (very bullish)
+    using keyword matching (English + Japanese).
+
+    Args:
+        symbol: Ticker code, e.g. "7203" or "ACB".
+        source: Data source override.
+    """
+    result = sentiment.sentiment_news(symbol, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def sentiment_market(
+    symbols: str,
+    source: str | None = None,
+) -> str:
+    """Batch sentiment analysis for multiple stocks.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = sentiment.sentiment_market(sym_list, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def sentiment_combined(
+    symbol: str,
+    source: str | None = None,
+) -> str:
+    """Combined technical + sentiment signal (70% TA + 30% sentiment).
+
+    Merges multi-indicator TA score with news sentiment for a comprehensive signal.
+
+    Args:
+        symbol: Ticker code.
+        source: Data source override.
+    """
+    result = sentiment.sentiment_combined(symbol, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def sentiment_screen(
+    symbols: str,
+    min_score: float = 0.0,
+    source: str | None = None,
+) -> str:
+    """Screen stocks by news sentiment score.
+
+    Args:
+        symbols: Comma-separated ticker codes.
+        min_score: Minimum sentiment score (-1 to 1). Default 0.0 (neutral+).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = sentiment.sentiment_screen(sym_list, min_score, source)
     return json.dumps(result, default=str, ensure_ascii=False)
 
 

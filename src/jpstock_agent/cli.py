@@ -15,7 +15,7 @@ from functools import wraps
 import click
 from tabulate import tabulate
 
-from . import core, ta, candlestick, backtest
+from . import core, ta, candlestick, backtest, portfolio, sentiment
 from .config import get_settings
 
 # ---------------------------------------------------------------------------
@@ -586,6 +586,140 @@ def cli_backtest_optimize(symbol, strategy, param, values, start, end, capital, 
 def cli_backtest_walk(symbol, strategy, window, step, start, end, capital, source, fmt):
     """Walk-forward analysis on rolling windows."""
     data = backtest.backtest_walk_forward(symbol, strategy, window, step, start, end, capital, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Monte Carlo & Advanced Backtest Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="backtest-mc")
+@click.argument("symbol")
+@click.option("--strategy", "-st", default="sma_crossover", help="Strategy to simulate")
+@click.option("--sims", "-n", default=1000, type=int, help="Number of simulations (default 1000)")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--capital", default=1000000, type=float, help="Initial capital")
+@common_options
+def cli_backtest_mc(symbol, strategy, sims, start, end, capital, source, fmt):
+    """Monte Carlo simulation for backtest robustness."""
+    data = backtest.backtest_monte_carlo(symbol, strategy, sims, start, end, capital, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="backtest-advanced")
+@click.argument("symbol")
+@click.option("--strategy", "-st", default="sma_crossover", help="Strategy name")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--capital", default=1000000, type=float, help="Initial capital")
+@common_options
+def cli_backtest_advanced(symbol, strategy, start, end, capital, source, fmt):
+    """Advanced backtest metrics (Sortino, Calmar, expectancy)."""
+    data = backtest.backtest_advanced_metrics(symbol, strategy, start, end, capital, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Portfolio Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="portfolio")
+@click.argument("symbols")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@common_options
+def cli_portfolio(symbols, start, end, source, fmt):
+    """Analyze a portfolio (comma-separated symbols)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = portfolio.portfolio_analyze(sym_list, start, end, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="portfolio-optimize")
+@click.argument("symbols")
+@click.option("--sims", "-n", default=5000, type=int, help="Portfolios to simulate (default 5000)")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@common_options
+def cli_portfolio_optimize(symbols, sims, start, end, source, fmt):
+    """Find optimal portfolio weights via Monte Carlo."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = portfolio.portfolio_optimize(sym_list, start, end, sims, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="portfolio-risk")
+@click.argument("symbols")
+@click.option("--weights", "-w", default=None, help="Comma-separated weights (default: equal)")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@common_options
+def cli_portfolio_risk(symbols, weights, start, end, source, fmt):
+    """Portfolio risk analysis (VaR, CVaR, Sortino, drawdown)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    w_list = None
+    if weights:
+        w_list = [float(w.strip()) for w in weights.split(",") if w.strip()]
+    data = portfolio.portfolio_risk(sym_list, w_list, start, end, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="portfolio-corr")
+@click.argument("symbols")
+@click.option("--start", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end", default=None, help="End date (YYYY-MM-DD)")
+@common_options
+def cli_portfolio_corr(symbols, start, end, source, fmt):
+    """Correlation matrix for a set of stocks."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = portfolio.portfolio_correlation(sym_list, start, end, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Sentiment Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="sentiment")
+@click.argument("symbol")
+@common_options
+def cli_sentiment(symbol, source, fmt):
+    """Analyze news sentiment for a stock."""
+    data = sentiment.sentiment_news(symbol, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="sentiment-market")
+@click.argument("symbols")
+@common_options
+def cli_sentiment_market(symbols, source, fmt):
+    """Batch sentiment analysis for multiple stocks."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = sentiment.sentiment_market(sym_list, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="sentiment-combined")
+@click.argument("symbol")
+@common_options
+def cli_sentiment_combined(symbol, source, fmt):
+    """Combined technical + sentiment signal."""
+    data = sentiment.sentiment_combined(symbol, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="sentiment-screen")
+@click.argument("symbols")
+@click.option("--min-score", default=0.0, type=float, help="Min sentiment score (-1 to 1)")
+@common_options
+def cli_sentiment_screen(symbols, min_score, source, fmt):
+    """Screen stocks by news sentiment."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = sentiment.sentiment_screen(sym_list, min_score, source)
     click.echo(_format_output(data, fmt))
 
 

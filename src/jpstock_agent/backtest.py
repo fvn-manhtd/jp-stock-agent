@@ -317,6 +317,271 @@ def backtest_walk_forward(
     return _safe_call(_walk_forward)
 
 
+def backtest_monte_carlo(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    num_simulations: int = 1000,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    initial_capital: float = 1_000_000,
+    source: Optional[str] = None,
+) -> dict:
+    """
+    Monte Carlo simulation for a backtest strategy.
+
+    Randomly resamples the trade returns from a real backtest to estimate
+    probability distributions and risk metrics.
+
+    Args:
+        symbol: Stock ticker code
+        strategy: Strategy name (default sma_crossover)
+        num_simulations: Number of Monte Carlo simulations (default 1000)
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        initial_capital: Starting capital
+        source: Data source
+
+    Returns:
+        dict with Monte Carlo metrics:
+        - strategy, symbol, num_simulations
+        - actual_return_pct (from real backtest)
+        - simulated_mean_return_pct, simulated_median_return_pct
+        - simulated_std_pct
+        - percentile_5, percentile_25, percentile_75, percentile_95
+        - probability_of_profit_pct
+        - probability_of_beating_buyhold_pct
+        - worst_case_pct, best_case_pct
+        - confidence_interval_90: [5th percentile, 95th percentile]
+    """
+
+    def _monte_carlo():
+        # Run the real backtest to get actual trades
+        result = backtest_strategy(
+            symbol,
+            strategy,
+            start=start,
+            end=end,
+            initial_capital=initial_capital,
+            source=source,
+        )
+
+        if isinstance(result, dict) and "error" in result:
+            return result
+
+        # Extract trade returns from sell trades
+        trades = result.get("trades", [])
+        sell_trades = [t for t in trades if t["action"] == "SELL"]
+
+        if len(sell_trades) < 3:
+            return {"error": "Not enough trades for Monte Carlo (minimum 3 required)"}
+
+        # Extract returns from sell trades
+        trade_returns = np.array([t.get("return_pct", 0) for t in sell_trades])
+
+        # Get buy-and-hold return for comparison
+        buy_hold_return = result.get("buy_hold_return_pct", 0)
+        actual_return = result.get("total_return_pct", 0)
+
+        # Run Monte Carlo simulations
+        simulated_returns = []
+        for _ in range(num_simulations):
+            # Randomly resample trades with replacement
+            resampled_returns = np.random.choice(
+                trade_returns, size=len(trade_returns), replace=True
+            )
+            # Calculate cumulative return for this simulation
+            cumulative_return = _round_val(
+                (np.prod(1 + resampled_returns / 100) - 1) * 100, 2
+            )
+            simulated_returns.append(cumulative_return)
+
+        simulated_returns = np.array(simulated_returns)
+
+        # Calculate percentiles
+        percentile_5 = _round_val(np.percentile(simulated_returns, 5), 2)
+        percentile_25 = _round_val(np.percentile(simulated_returns, 25), 2)
+        percentile_75 = _round_val(np.percentile(simulated_returns, 75), 2)
+        percentile_95 = _round_val(np.percentile(simulated_returns, 95), 2)
+
+        # Calculate probability metrics
+        prob_profit = _round_val(
+            (np.sum(simulated_returns > 0) / num_simulations) * 100, 2
+        )
+        prob_beat_bh = _round_val(
+            (np.sum(simulated_returns > buy_hold_return) / num_simulations) * 100, 2
+        )
+
+        return {
+            "strategy": strategy,
+            "symbol": symbol,
+            "num_simulations": num_simulations,
+            "actual_return_pct": _round_val(actual_return, 2),
+            "buy_hold_return_pct": _round_val(buy_hold_return, 2),
+            "simulated_mean_return_pct": _round_val(simulated_returns.mean(), 2),
+            "simulated_median_return_pct": _round_val(np.median(simulated_returns), 2),
+            "simulated_std_pct": _round_val(simulated_returns.std(), 2),
+            "percentile_5": percentile_5,
+            "percentile_25": percentile_25,
+            "percentile_75": percentile_75,
+            "percentile_95": percentile_95,
+            "probability_of_profit_pct": prob_profit,
+            "probability_of_beating_buyhold_pct": prob_beat_bh,
+            "worst_case_pct": _round_val(simulated_returns.min(), 2),
+            "best_case_pct": _round_val(simulated_returns.max(), 2),
+            "confidence_interval_90": [percentile_5, percentile_95],
+        }
+
+    return _safe_call(_monte_carlo)
+
+
+def backtest_advanced_metrics(
+    symbol: str,
+    strategy: str = "sma_crossover",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    initial_capital: float = 1_000_000,
+    source: Optional[str] = None,
+) -> dict:
+    """
+    Enhanced backtest metrics beyond basic backtest_strategy.
+
+    Adds advanced risk and performance metrics including Sortino ratio,
+    Calmar ratio, profit factor, consecutive wins/losses, and more.
+
+    Args:
+        symbol: Stock ticker code
+        strategy: Strategy name (default sma_crossover)
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        initial_capital: Starting capital
+        source: Data source
+
+    Returns:
+        dict with all backtest_strategy metrics PLUS:
+        - sortino_ratio: Return / downside deviation
+        - calmar_ratio: Annual return / max drawdown
+        - profit_factor: Gross profit / gross loss
+        - avg_winning_trade_pct, avg_losing_trade_pct
+        - max_consecutive_wins, max_consecutive_losses
+        - avg_trade_duration_days
+        - recovery_factor: Total return / max drawdown
+        - expectancy: (win_rate * avg_win) - (loss_rate * avg_loss)
+        - risk_reward_ratio: avg_win / avg_loss
+    """
+
+    def _advanced_metrics():
+        # Get base backtest results
+        result = backtest_strategy(
+            symbol, strategy, start=start, end=end, initial_capital=initial_capital, source=source
+        )
+
+        if isinstance(result, dict) and "error" in result:
+            return result
+
+        trades = result.get("trades", [])
+        sell_trades = [t for t in trades if t["action"] == "SELL"]
+
+        if not sell_trades:
+            return result  # Return base metrics if no sell trades
+
+        # Get daily returns for Sortino
+        end_date = end or datetime.now().strftime("%Y-%m-%d")
+        if start is None:
+            start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        else:
+            start_date = start
+
+        df = _get_ohlcv_df(symbol, start=start_date, end=end_date, source=source)
+        daily_returns = df["close"].pct_change().dropna()
+
+        # Sortino ratio (using downside deviation)
+        downside_returns = daily_returns[daily_returns < 0]
+        if len(downside_returns) > 0:
+            downside_std = downside_returns.std()
+            if downside_std > 0:
+                sortino_ratio = _round_val(
+                    (daily_returns.mean() / downside_std) * np.sqrt(252), 2
+                )
+            else:
+                sortino_ratio = 0.0
+        else:
+            sortino_ratio = 0.0
+
+        # Calmar ratio
+        max_drawdown = result.get("max_drawdown_pct", 0)
+        annual_return = result.get("annual_return_pct", 0)
+        if max_drawdown != 0:
+            calmar_ratio = _round_val(annual_return / abs(max_drawdown), 2)
+        else:
+            calmar_ratio = 0.0
+
+        # Trade profitability metrics
+        trade_returns = [t.get("return_pct", 0) for t in sell_trades]
+        winning_returns = [r for r in trade_returns if r > 0]
+        losing_returns = [r for r in trade_returns if r < 0]
+
+        avg_win = _round_val(np.mean(winning_returns), 2) if winning_returns else 0.0
+        avg_loss = _round_val(np.mean(losing_returns), 2) if losing_returns else 0.0
+
+        # Profit factor (gross profit / gross loss)
+        gross_profit = sum(winning_returns) if winning_returns else 0
+        gross_loss = abs(sum(losing_returns)) if losing_returns else 0
+        profit_factor = _round_val(
+            gross_profit / gross_loss, 2 if gross_loss > 0 else 0
+        )
+
+        # Max consecutive wins/losses
+        max_consec_wins = _max_consecutive(trade_returns, "win")
+        max_consec_losses = _max_consecutive(trade_returns, "loss")
+
+        # Average trade duration (approximation)
+        if len(trades) > 1:
+            total_days = (
+                pd.to_datetime(trades[-1]["date"])
+                - pd.to_datetime(trades[0]["date"])
+            ).days
+            avg_duration = _round_val(total_days / (len(sell_trades) or 1), 1)
+        else:
+            avg_duration = 0.0
+
+        # Recovery factor
+        total_return = result.get("total_return_pct", 0)
+        if max_drawdown != 0:
+            recovery_factor = _round_val(total_return / abs(max_drawdown), 2)
+        else:
+            recovery_factor = 0.0
+
+        # Expectancy
+        win_rate = result.get("win_rate_pct", 0) / 100
+        loss_rate = 1 - win_rate
+        expectancy = _round_val(
+            (win_rate * avg_win) - (loss_rate * abs(avg_loss)), 2
+        )
+
+        # Risk/Reward ratio
+        risk_reward = (
+            _round_val(avg_win / abs(avg_loss), 2) if avg_loss != 0 else 0.0
+        )
+
+        # Return base metrics plus new ones
+        return {
+            **{k: v for k, v in result.items() if k != "trades"},
+            "sortino_ratio": sortino_ratio,
+            "calmar_ratio": calmar_ratio,
+            "profit_factor": profit_factor,
+            "avg_winning_trade_pct": avg_win,
+            "avg_losing_trade_pct": avg_loss,
+            "max_consecutive_wins": max_consec_wins,
+            "max_consecutive_losses": max_consec_losses,
+            "avg_trade_duration_days": avg_duration,
+            "recovery_factor": recovery_factor,
+            "expectancy": expectancy,
+            "risk_reward_ratio": risk_reward,
+        }
+
+    return _safe_call(_advanced_metrics)
+
+
 # ============================================================================
 # Internal Helpers
 # ============================================================================
@@ -707,3 +972,33 @@ def _calculate_vwap(df: pd.DataFrame) -> pd.Series:
     typical_price = (df["high"] + df["low"] + df["close"]) / 3
     vwap = (typical_price * df["volume"]).cumsum() / df["volume"].cumsum()
     return vwap
+
+
+def _max_consecutive(returns: list, trade_type: str = "win") -> int:
+    """
+    Calculate maximum consecutive wins or losses.
+
+    Args:
+        returns: List of trade returns (percentages)
+        trade_type: "win" for consecutive wins, "loss" for consecutive losses
+
+    Returns:
+        int: Maximum consecutive count
+    """
+    if not returns:
+        return 0
+
+    max_consec = 0
+    current_consec = 0
+
+    for ret in returns:
+        is_win = ret > 0
+        is_loss = ret < 0
+
+        if (trade_type == "win" and is_win) or (trade_type == "loss" and is_loss):
+            current_consec += 1
+            max_consec = max(max_consec, current_consec)
+        else:
+            current_consec = 0
+
+    return max_consec

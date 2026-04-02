@@ -11,9 +11,11 @@ src/jpstock_agent/
   core.py         – all data functions (returns list[dict] | dict)
   ta.py           – technical analysis module (24 TA functions + 29 screening strategies)
   candlestick.py  – candlestick pattern detection (20 patterns)
-  backtest.py     – backtesting engine (12 strategies, optimizer, walk-forward)
-  server.py       – FastMCP tool definitions (55 tools: 24 data + 24 TA + 3 candlestick + 4 backtest)
-  cli.py          – Click CLI commands (50+ commands + serve)
+  backtest.py     – backtesting engine (12 strategies, optimizer, walk-forward, Monte Carlo)
+  portfolio.py    – portfolio optimization (Monte Carlo, risk analysis, correlation)
+  sentiment.py    – sentiment analysis (news scoring, combined TA+sentiment signals)
+  server.py       – FastMCP tool definitions (67 tools)
+  cli.py          – Click CLI commands (70+ commands + serve)
 ```
 
 ## Key Conventions
@@ -120,3 +122,23 @@ Morning Star, Evening Star, Three White Soldiers, Three Black Crows
 - `backtest_compare` – compare all 12 strategies side by side
 - `backtest_optimize` – parameter optimization (test ranges of values)
 - `backtest_walk_forward` – rolling window consistency analysis
+- `backtest_monte_carlo` – Monte Carlo simulation (probability distributions, confidence intervals)
+- `backtest_advanced_metrics` – advanced metrics (Sortino, Calmar, profit factor, expectancy, risk/reward)
+
+## Portfolio Optimization (portfolio.py)
+Modern portfolio theory with Monte Carlo simulation:
+
+### Functions
+- `portfolio_analyze` – per-stock returns, volatility, Sharpe, correlation matrix
+- `portfolio_optimize` – Monte Carlo optimization (max Sharpe, min volatility, efficient frontier)
+- `portfolio_risk` – risk metrics (VaR 95%, CVaR, Sortino, max drawdown, beta)
+- `portfolio_correlation` – correlation & covariance matrices, most/least correlated pairs
+
+## Sentiment Analysis (sentiment.py)
+News-based sentiment scoring with English + Japanese keyword matching:
+
+### Functions
+- `sentiment_news` – analyze news headlines for a stock (-1 to +1 score)
+- `sentiment_market` – batch sentiment for multiple stocks
+- `sentiment_combined` – combined TA (70%) + sentiment (30%) signal
+- `sentiment_screen` – screen stocks by sentiment threshold
