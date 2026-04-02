@@ -27,7 +27,7 @@ pip install jpstock-agent
 Or from source:
 
 ```bash
-git clone https://github.com/your-username/jpstock-agent.git
+git clone https://github.com/fvn-manhtd/jp-stock-agent.git
 cd jpstock-agent
 pip install -e ".[dev]"
 ```
@@ -119,11 +119,22 @@ Japanese tickers use the `.T` suffix (e.g., `7203.T` for Toyota). The agent auto
 
 Official data from Japan Exchange Group (JPX). Requires free registration at [jpx-jquants.com](https://jpx-jquants.com/).
 
+**Recommended (API Key v2):**
+
+```bash
+export JQUANTS_API_KEY="your_api_key"
+export JPSTOCK_DEFAULT_SOURCE="jquants"
+```
+
+**Alternative (email/password v1):**
+
 ```bash
 export JQUANTS_API_EMAIL="your_email@example.com"
 export JQUANTS_API_PASSWORD="your_password"
 export JPSTOCK_DEFAULT_SOURCE="jquants"
 ```
+
+Auth priority: `JQUANTS_API_KEY` (v2) > `JQUANTS_REFRESH_TOKEN` (v1) > email/password (v1)
 
 Provides additional data:
 - Complete TSE listings
@@ -139,9 +150,10 @@ Provides additional data:
 | `JPSTOCK_MCP_TRANSPORT` | `stdio` | Transport: stdio, sse, http |
 | `JPSTOCK_MCP_HOST` | `0.0.0.0` | Server bind address |
 | `JPSTOCK_MCP_PORT` | `8000` | Server port |
-| `JQUANTS_API_EMAIL` | | J-Quants email |
-| `JQUANTS_API_PASSWORD` | | J-Quants password |
-| `JQUANTS_REFRESH_TOKEN` | | J-Quants refresh token |
+| `JQUANTS_API_KEY` | | J-Quants API key (v2, highest priority) |
+| `JQUANTS_API_EMAIL` | | J-Quants login email (v1) |
+| `JQUANTS_API_PASSWORD` | | J-Quants login password (v1) |
+| `JQUANTS_REFRESH_TOKEN` | | J-Quants refresh token (v1 alternative) |
 
 ## Docker
 
