@@ -148,6 +148,7 @@ def _vn_stock(symbol: str):
     """Return a vnstock Stock object for the given Vietnamese ticker."""
     global _VN_KEY_REGISTERED
     import logging as _log  # noqa: PLC0415
+
     from vnstock import Vnstock  # noqa: PLC0415
     # Suppress repeated charting-library warnings after first import
     _log.getLogger("vnstock.common.viz").setLevel(_log.ERROR)
@@ -196,7 +197,7 @@ def stock_history(
     if source == "jquants":
         client = get_jquants_client()
         if client is None:
-            return {"error": "J-Quants credentials not configured. Set JQUANTS_API_KEY or JQUANTS_API_EMAIL/JQUANTS_API_PASSWORD."}
+            return {"error": "J-Quants credentials not configured. Set JQUANTS_API_KEY or EMAIL/PASSWORD."}
         result = _safe_call(_jq_get_prices, client, sym, start.replace("-", ""), end.replace("-", ""))
         if isinstance(result, dict) and "error" in result:
             return result

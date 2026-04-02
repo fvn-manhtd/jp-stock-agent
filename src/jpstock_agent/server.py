@@ -12,7 +12,7 @@ import json
 
 from fastmcp import FastMCP
 
-from . import core, ta, candlestick, backtest, portfolio, sentiment
+from . import backtest, candlestick, core, portfolio, sentiment, ta
 from .config import get_settings
 
 app = FastMCP(

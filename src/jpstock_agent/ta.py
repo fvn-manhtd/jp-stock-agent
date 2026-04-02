@@ -23,7 +23,7 @@ from typing import Any
 
 import pandas as pd
 
-from .core import _default_dates, _df_to_records, _safe_call, stock_history
+from .core import _df_to_records, stock_history
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -502,7 +502,7 @@ def ta_multi_indicator(
 
     from ta.momentum import RSIIndicator, StochasticOscillator
     from ta.trend import MACD
-    from ta.volatility import BollingerBands, AverageTrueRange
+    from ta.volatility import AverageTrueRange, BollingerBands
 
     close = df["close"]
     high = df["high"]
@@ -655,9 +655,9 @@ def ta_screen(
     - Volume: volume_spike, high_volume_gain
     - Supertrend: supertrend_bullish, supertrend_bearish
     """
-    from ta.momentum import RSIIndicator, MFIIndicator
+    from ta.momentum import MFIIndicator, RSIIndicator
     from ta.trend import MACD
-    from ta.volatility import BollingerBands, AverageTrueRange
+    from ta.volatility import AverageTrueRange, BollingerBands
 
     results = []
     for sym in symbols:
@@ -822,7 +822,8 @@ def ta_screen(
                     mfi_val = float(mfi.iloc[-1]) if len(mfi.dropna()) > 0 else None
                     if mfi_val is not None:
                         info["MFI_14"] = _round_val(mfi_val)
-                        match = (strategy == "mfi_oversold" and mfi_val < 20) or (strategy == "mfi_overbought" and mfi_val > 80)
+                        match = (strategy == "mfi_oversold" and mfi_val < 20) or \
+                            (strategy == "mfi_overbought" and mfi_val > 80)
 
             elif strategy in ("supertrend_bullish", "supertrend_bearish"):
                 if len(df) >= 11:

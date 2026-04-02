@@ -15,7 +15,7 @@ from functools import wraps
 import click
 from tabulate import tabulate
 
-from . import core, ta, candlestick, backtest, portfolio, sentiment
+from . import backtest, candlestick, core, portfolio, sentiment, ta
 from .config import get_settings
 
 # ---------------------------------------------------------------------------
@@ -735,7 +735,6 @@ def cli_sentiment_screen(symbols, min_score, source, fmt):
 def serve(transport, host, port):
     """Start the MCP server."""
     from .server import app
-    from .config import get_settings
 
     settings = get_settings()
     transport = transport or settings.jpstock_mcp_transport

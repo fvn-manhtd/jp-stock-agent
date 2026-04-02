@@ -17,13 +17,12 @@ or ``{"error": str}`` on failure.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import pandas as pd
 
-from .core import _df_to_records, _safe_call
-from .ta import _get_ohlcv_df, _round_val
+from .core import _safe_call
+from .ta import _get_ohlcv_df
 
 # ---------------------------------------------------------------------------
 # Candlestick pattern detection thresholds
@@ -235,7 +234,6 @@ def _detect_inverted_hammer(df: pd.DataFrame, idx: int) -> dict[str, Any] | None
             upper_shadow >= LONG_SHADOW_RATIO * body_size and
             lower_shadow < 0.5 * body_size and
             body_at_bottom):
-        in_downtrend = _is_in_downtrend(df, idx - 1) if idx > 0 else True
         return {
             "name": "Inverted Hammer",
             "type": PATTERN_TYPE_BULLISH,

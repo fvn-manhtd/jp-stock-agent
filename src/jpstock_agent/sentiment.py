@@ -13,8 +13,6 @@ or ``{"error": str}`` on failure.
 
 from __future__ import annotations
 
-from typing import Any
-
 from .core import _safe_call, company_news
 from .ta import _round_val, ta_multi_indicator
 
