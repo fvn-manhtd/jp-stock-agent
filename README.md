@@ -1,8 +1,20 @@
 # JPStock Agent
 
+[![MCPize](https://mcpize.com/badge/@fvn.manhtd/jpstock-agent)](https://mcpize.com/mcp/jpstock-agent)
+
 **MCP server & CLI for Japanese and Vietnamese stock market data** — 111 AI tools powered by [yfinance](https://github.com/ranaroussi/yfinance), [J-Quants API](https://jpx-jquants.com/), and [vnstock](https://vnstocks.com/).
 
 Integrate real-time stock data, technical analysis, backtesting, portfolio optimization, and ML predictions directly into **Claude**, **Cursor**, or any MCP-compatible AI assistant.
+
+## Connect via MCPize
+
+Use this MCP server instantly with no local installation:
+
+```bash
+npx -y mcpize connect @fvn.manhtd/jpstock-agent --client claude
+```
+
+Or connect at: **https://mcpize.com/mcp/jpstock-agent**
 
 ## Highlights
 
