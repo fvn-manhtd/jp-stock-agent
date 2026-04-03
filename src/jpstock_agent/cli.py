@@ -15,7 +15,21 @@ from functools import wraps
 import click
 from tabulate import tabulate
 
-from . import backtest, candlestick, core, financial, ml, options, portfolio, sentiment, ta
+from . import (
+    alert,
+    backtest,
+    candlestick,
+    core,
+    financial,
+    market,
+    ml,
+    options,
+    portfolio,
+    report,
+    sentiment,
+    strategy,
+    ta,
+)
 from .config import get_settings
 
 # ---------------------------------------------------------------------------
@@ -938,6 +952,198 @@ def cli_fin_dividend(symbol, fmt):
 def cli_fin_ratios(symbol, period, fmt):
     """Compute financial ratios from raw statements (profitability, efficiency, DuPont)."""
     data = financial.financial_ratios_calc(symbol, period)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Stock Report Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="report")
+@click.argument("symbol")
+@click.option("--no-ml", is_flag=True, help="Skip ML prediction")
+@click.option("--options", "incl_options", is_flag=True, help="Include options analysis")
+@click.option("--period", "-p", default="annual", help="annual or quarterly")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_report(symbol, no_ml, incl_options, period, source, fmt):
+    """Comprehensive stock report: TA + financial + sentiment + ML in one call."""
+    data = report.stock_report(symbol, include_ml=not no_ml, include_options=incl_options, period=period, source=source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="report-quick")
+@click.argument("symbol")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_report_quick(symbol, source, fmt):
+    """Quick stock summary: price, TA signal, key ratios."""
+    data = report.stock_report_quick(symbol, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="report-compare")
+@click.argument("symbols")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_report_compare(symbols, source, fmt):
+    """Side-by-side comparison report (comma-separated symbols)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = report.stock_report_compare(sym_list, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Alert & Watchlist Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="alert-price")
+@click.argument("symbol")
+@click.option("--above", type=float, default=None, help="Alert if price above this level")
+@click.option("--below", type=float, default=None, help="Alert if price below this level")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_alert_price(symbol, above, below, source, fmt):
+    """Quick price-level alert."""
+    data = alert.alert_price(symbol, above, below, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="alert-ta")
+@click.argument("symbol")
+@click.option("--conditions", "-c", default=None, help="Comma-separated condition names")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_alert_ta(symbol, conditions, source, fmt):
+    """TA-based alerts: RSI, MACD, BB, volume, golden/death cross."""
+    cond_list = [c.strip() for c in conditions.split(",") if c.strip()] if conditions else None
+    data = alert.alert_ta(symbol, cond_list, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="alert-fundamental")
+@click.argument("symbol")
+@click.option("--pe-below", type=float, default=None, help="P/E below threshold")
+@click.option("--pe-above", type=float, default=None, help="P/E above threshold")
+@click.option("--yield-above", type=float, default=None, help="Dividend yield above")
+@click.option("--roe-above", type=float, default=None, help="ROE above")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_alert_fundamental(symbol, pe_below, pe_above, yield_above, roe_above, fmt):
+    """Fundamental-based alerts: P/E, yield, ROE thresholds."""
+    data = alert.alert_fundamental(symbol, pe_below, pe_above, yield_above, roe_above)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="alert-watchlist")
+@click.argument("symbols")
+@click.option("--conditions", "-c", default=None, help="Comma-separated condition names")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_alert_watchlist(symbols, conditions, source, fmt):
+    """Check multiple symbols against TA alert conditions."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    cond_list = [c.strip() for c in conditions.split(",") if c.strip()] if conditions else None
+    data = alert.alert_watchlist(sym_list, cond_list, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="alert-conditions")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_alert_conditions(fmt):
+    """List all available alert conditions."""
+    data = alert.alert_list_conditions()
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Market & Sector Analysis Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="market-breadth")
+@click.argument("symbols")
+@click.option("--days", "-d", default=1, type=int, help="Lookback days (default 1)")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_market_breadth(symbols, days, source, fmt):
+    """Market breadth: advance/decline, 52w highs/lows (comma-separated symbols)."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = market.market_breadth(sym_list, days, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="market-movers")
+@click.argument("symbols")
+@click.option("--days", "-d", default=1, type=int, help="Lookback days (default 1)")
+@click.option("--top", "-n", default=5, type=int, help="Top N movers (default 5)")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_market_movers(symbols, days, top, source, fmt):
+    """Top gainers and losers from a list of symbols."""
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    data = market.market_top_movers(sym_list, days, top, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="market-regime")
+@click.option("--symbol", "-s", default="^N225", help="Index symbol (default ^N225)")
+@click.option("--source", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_market_regime(symbol, source, fmt):
+    """Detect market regime: BULL, BEAR, or SIDEWAYS."""
+    data = market.market_regime(symbol, source)
+    click.echo(_format_output(data, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Custom Strategy Builder Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="strategy-eval")
+@click.argument("symbol")
+@click.argument("conditions")
+@click.option("--logic", "-l", default="AND", help="AND or OR (default AND)")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_strategy_eval(symbol, conditions, logic, source, fmt):
+    """Evaluate custom strategy against a symbol (conditions as JSON)."""
+    import json as json_mod
+    try:
+        cond_list = json_mod.loads(conditions)
+    except json_mod.JSONDecodeError:
+        click.echo("Error: Invalid JSON for conditions")
+        return
+    data = strategy.strategy_evaluate(symbol, cond_list, logic, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="strategy-screen")
+@click.argument("symbols")
+@click.argument("conditions")
+@click.option("--logic", "-l", default="AND", help="AND or OR (default AND)")
+@click.option("--source", "-s", default=None, help="Data source")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_strategy_screen(symbols, conditions, logic, source, fmt):
+    """Screen symbols with custom strategy (conditions as JSON)."""
+    import json as json_mod
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    try:
+        cond_list = json_mod.loads(conditions)
+    except json_mod.JSONDecodeError:
+        click.echo("Error: Invalid JSON for conditions")
+        return
+    data = strategy.strategy_screen(sym_list, cond_list, logic, source)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="strategy-conditions")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_strategy_conditions(fmt):
+    """List all available strategy condition types."""
+    data = strategy.strategy_list_conditions()
     click.echo(_format_output(data, fmt))
 
 

@@ -12,7 +12,21 @@ import json
 
 from fastmcp import FastMCP
 
-from . import backtest, candlestick, core, financial, ml, options, portfolio, sentiment, ta
+from . import (
+    alert,
+    backtest,
+    candlestick,
+    core,
+    financial,
+    market,
+    ml,
+    options,
+    portfolio,
+    report,
+    sentiment,
+    strategy,
+    ta,
+)
 from .config import get_settings
 
 app = FastMCP(
@@ -1642,6 +1656,354 @@ def financial_ratios_calc(
         period: "annual" or "quarterly".
     """
     result = financial.financial_ratios_calc(symbol, period)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Stock Report Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def stock_report(
+    symbol: str,
+    include_ml: bool = True,
+    include_options: bool = False,
+    period: str = "annual",
+    source: str | None = None,
+) -> str:
+    """Comprehensive stock report: TA + financial health + valuation + sentiment + ML in one call.
+
+    Args:
+        symbol: Ticker code, e.g. "7203" or "ACB".
+        include_ml: Include ML prediction (requires scikit-learn). Default True.
+        include_options: Include options analysis. Default False.
+        period: Financial period: "annual" or "quarterly".
+        source: Data source override.
+    """
+    result = report.stock_report(symbol, include_ml, include_options, period, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def stock_report_quick(
+    symbol: str,
+    source: str | None = None,
+) -> str:
+    """Quick stock summary: price, TA signal, key ratios. Much faster than full report.
+
+    Args:
+        symbol: Ticker code.
+        source: Data source override.
+    """
+    result = report.stock_report_quick(symbol, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def stock_report_compare(
+    symbols: str,
+    source: str | None = None,
+) -> str:
+    """Side-by-side comparison report for multiple stocks.
+
+    Args:
+        symbols: Comma-separated ticker codes, e.g. "7203,6758,9984".
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = report.stock_report_compare(sym_list, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Alert & Watchlist Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def alert_check(
+    symbol: str,
+    conditions: str,
+    source: str | None = None,
+) -> str:
+    """Evaluate custom alert conditions for a symbol.
+
+    Args:
+        symbol: Ticker code.
+        conditions: JSON array of conditions, e.g. '[{"condition":"rsi_oversold","params":{"threshold":25}}]'.
+        source: Data source override.
+    """
+    import json as json_mod
+    try:
+        cond_list = json_mod.loads(conditions)
+    except json_mod.JSONDecodeError:
+        return json.dumps({"error": "Invalid JSON for conditions"})
+    result = alert.alert_check(symbol, cond_list, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def alert_price(
+    symbol: str,
+    above: float | None = None,
+    below: float | None = None,
+    source: str | None = None,
+) -> str:
+    """Quick price-level alert: check if price is above/below thresholds.
+
+    Args:
+        symbol: Ticker code.
+        above: Alert if price above this level.
+        below: Alert if price below this level.
+        source: Data source override.
+    """
+    result = alert.alert_price(symbol, above, below, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def alert_ta(
+    symbol: str,
+    conditions: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Check TA-based alerts: RSI extremes, MACD cross, BB squeeze, volume spike, etc.
+
+    Args:
+        symbol: Ticker code.
+        conditions: Comma-separated condition names (default: all common).
+            Available: rsi_oversold, rsi_overbought, macd_bullish_cross,
+            macd_bearish_cross, bb_squeeze, volume_spike, golden/death_cross.
+        source: Data source override.
+    """
+    cond_list = None
+    if conditions:
+        cond_list = [c.strip() for c in conditions.split(",") if c.strip()]
+    result = alert.alert_ta(symbol, cond_list, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def alert_fundamental(
+    symbol: str,
+    pe_below: float | None = None,
+    pe_above: float | None = None,
+    yield_above: float | None = None,
+    roe_above: float | None = None,
+    debt_to_equity_below: float | None = None,
+    f_score_above: int | None = None,
+) -> str:
+    """Fundamental-based alerts: P/E, yield, ROE, D/E, F-score thresholds.
+
+    Args:
+        symbol: Ticker code.
+        pe_below: Alert if P/E below this value.
+        pe_above: Alert if P/E above this value.
+        yield_above: Alert if dividend yield above this (e.g. 0.03 for 3%).
+        roe_above: Alert if ROE above this threshold.
+        debt_to_equity_below: Alert if D/E below this value.
+        f_score_above: Alert if Piotroski F-score above this (0-9).
+    """
+    result = alert.alert_fundamental(
+        symbol, pe_below, pe_above, yield_above,
+        roe_above, debt_to_equity_below, f_score_above,
+    )
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def alert_watchlist(
+    symbols: str,
+    conditions: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Check multiple symbols against common TA alert conditions.
+
+    Args:
+        symbols: Comma-separated ticker codes.
+        conditions: Comma-separated TA condition names (default: common set).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    cond_list = None
+    if conditions:
+        cond_list = [c.strip() for c in conditions.split(",") if c.strip()]
+    result = alert.alert_watchlist(sym_list, cond_list, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def alert_list_conditions() -> str:
+    """List all available alert conditions with descriptions and default parameters."""
+    result = alert.alert_list_conditions()
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Market & Sector Analysis Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def market_sector_performance(
+    sectors: str,
+    days: int = 30,
+    source: str | None = None,
+) -> str:
+    """Compare performance across sectors. Returns ranking from best to worst.
+
+    Args:
+        sectors: JSON mapping sector→symbol lists,
+            e.g. '{"Auto":["7203","7267"],"Tech":["6758","9984"]}'.
+        days: Lookback period in days (default 30).
+        source: Data source override.
+    """
+    import json as json_mod
+    try:
+        sector_dict = json_mod.loads(sectors)
+    except json_mod.JSONDecodeError:
+        return json.dumps({"error": "Invalid JSON for sectors"})
+    result = market.market_sector_performance(sector_dict, days, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def market_breadth(
+    symbols: str,
+    days: int = 1,
+    source: str | None = None,
+) -> str:
+    """Market breadth: advance/decline ratio, new 52w highs/lows, breadth signal.
+
+    Args:
+        symbols: Comma-separated ticker codes (market universe).
+        days: Lookback period (default 1).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = market.market_breadth(sym_list, days, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def market_top_movers(
+    symbols: str,
+    days: int = 1,
+    top_n: int = 5,
+    source: str | None = None,
+) -> str:
+    """Top gainers and losers from a list of symbols.
+
+    Args:
+        symbols: Comma-separated ticker codes.
+        days: Lookback period (default 1).
+        top_n: Number of top movers each direction (default 5).
+        source: Data source override.
+    """
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    result = market.market_top_movers(sym_list, days, top_n, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def market_regime(
+    symbol: str = "^N225",
+    source: str | None = None,
+) -> str:
+    """Detect market regime: BULL, BEAR, SIDEWAYS using SMA/momentum/volatility.
+
+    Args:
+        symbol: Index symbol. Default "^N225" (Nikkei). Others: "^GSPC" (S&P500), "^VNI" (VN-Index).
+        source: Data source override.
+    """
+    result = market.market_regime(symbol, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def market_heatmap(
+    sectors: str,
+    days: int = 1,
+    source: str | None = None,
+) -> str:
+    """Sector-grouped performance heatmap data.
+
+    Args:
+        sectors: JSON object mapping sector names to symbol lists.
+        days: Lookback period (default 1).
+        source: Data source override.
+    """
+    import json as json_mod
+    try:
+        sector_dict = json_mod.loads(sectors)
+    except json_mod.JSONDecodeError:
+        return json.dumps({"error": "Invalid JSON for sectors"})
+    result = market.market_heatmap(sector_dict, days, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Custom Strategy Builder Tools
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def strategy_evaluate(
+    symbol: str,
+    conditions: str,
+    logic: str = "AND",
+    source: str | None = None,
+) -> str:
+    """Evaluate custom composed conditions against a single stock.
+
+    Combine TA + fundamental + price conditions with AND/OR logic.
+
+    Args:
+        symbol: Ticker code.
+        conditions: JSON array of condition objects with type and params.
+            E.g. '[{"type":"rsi_below","params":{"value":30}},{"type":"macd_bullish"}]'.
+        logic: "AND" (all must pass) or "OR" (any). Default "AND".
+        source: Data source override.
+    """
+    import json as json_mod
+    try:
+        cond_list = json_mod.loads(conditions)
+    except json_mod.JSONDecodeError:
+        return json.dumps({"error": "Invalid JSON for conditions"})
+    result = strategy.strategy_evaluate(symbol, cond_list, logic, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def strategy_screen(
+    symbols: str,
+    conditions: str,
+    logic: str = "AND",
+    source: str | None = None,
+) -> str:
+    """Screen multiple stocks with custom composed conditions.
+
+    Args:
+        symbols: Comma-separated ticker codes.
+        conditions: JSON array of conditions (same format as strategy_evaluate).
+        logic: "AND" or "OR". Default "AND".
+        source: Data source override.
+    """
+    import json as json_mod
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    try:
+        cond_list = json_mod.loads(conditions)
+    except json_mod.JSONDecodeError:
+        return json.dumps({"error": "Invalid JSON for conditions"})
+    result = strategy.strategy_screen(sym_list, cond_list, logic, source)
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def strategy_list_conditions() -> str:
+    """List all available strategy condition types grouped by category."""
+    result = strategy.strategy_list_conditions()
     return json.dumps(result, default=str, ensure_ascii=False)
 
 

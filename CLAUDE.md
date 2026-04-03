@@ -12,11 +12,18 @@ src/jpstock_agent/
   core.py         – all data functions with retry + caching (returns list[dict] | dict)
   ta.py           – technical analysis module (24 TA functions + 29 screening strategies)
   candlestick.py  – candlestick pattern detection (20 patterns)
-  backtest.py     – backtesting engine (12 strategies, optimizer, walk-forward, Monte Carlo)
-  portfolio.py    – portfolio optimization (Monte Carlo, risk analysis, correlation)
+  backtest.py     – backtesting engine (12 strategies, optimizer, walk-forward, Monte Carlo, cost model, position sizing)
+  portfolio.py    – portfolio optimization (Monte Carlo, risk analysis, correlation, parallel fetch)
   sentiment.py    – sentiment analysis (news scoring, combined TA+sentiment signals)
-  server.py       – FastMCP tool definitions (65 tools)
-  cli.py          – Click CLI commands (56 commands + serve)
+  financial.py    – fundamental analysis (Altman Z, Piotroski F, DCF, growth trends, peer compare, dividends, DuPont)
+  ml.py           – ML signal generation (Random Forest, Gradient Boosting, feature importance, combined ML+TA)
+  options.py      – options & derivatives (chain, Black-Scholes Greeks, IV surface, unusual activity, max pain)
+  report.py       – unified stock reports (comprehensive, quick, comparison – aggregates all modules)
+  alert.py        – alert & watchlist (16 TA conditions, price/fundamental alerts, watchlist monitoring)
+  market.py       – sector & market analysis (breadth, regime detection, top movers, heatmap)
+  strategy.py     – custom strategy builder (27 composable conditions, AND/OR logic, screening)
+  server.py       – FastMCP tool definitions (103 tools)
+  cli.py          – Click CLI commands (88 commands + serve)
 ```
 
 ## Key Conventions
@@ -29,6 +36,7 @@ src/jpstock_agent/
 ## Commands
 ```bash
 pip install -e ".[dev]"         # Install in dev mode
+pip install -e ".[ml]"          # Install with ML dependencies (scikit-learn)
 ruff check src/                 # Lint
 pytest                          # Test
 jpstock-agent history 7203      # CLI usage
@@ -36,7 +44,7 @@ jpstock-agent serve             # Start MCP server (stdio)
 ```
 
 ## Data Sources
-- **yfinance**: Free, no auth needed. Good for prices, company info, financials, forex, crypto.
+- **yfinance**: Free, no auth needed. Good for prices, company info, financials, forex, crypto, options.
 - **jquants**: Official JPX data. Needs `JQUANTS_API_EMAIL` + `JQUANTS_API_PASSWORD`. Better for listings, sectors, calendar.
 - **vnstocks**: Vietnamese market data (HOSE/HNX/UPCOM) via `vnstock` library. Free, no auth needed for guest tier (20 req/min). Use 3-letter codes like "ACB", "VNM", "VIC". Internal data source defaults to "VCI".
 
@@ -125,6 +133,12 @@ Morning Star, Evening Star, Three White Soldiers, Three Black Crows
 - `backtest_walk_forward` – rolling window consistency analysis
 - `backtest_monte_carlo` – Monte Carlo simulation (probability distributions, confidence intervals)
 - `backtest_advanced_metrics` – advanced metrics (Sortino, Calmar, profit factor, expectancy, risk/reward)
+- `backtest_realistic` – realistic backtesting with transaction costs + position sizing
+
+### Cost Model & Position Sizing
+- `CostModel`: commission_pct, slippage_pct, spread_pct, min_commission
+- Market presets: `JP_MARKET_COSTS`, `VN_MARKET_COSTS`, `NO_COSTS`
+- 5 position sizing strategies: `full`, `kelly` (half-Kelly), `atr`, `max_loss`, `fixed_fraction`
 
 ## Portfolio Optimization (portfolio.py)
 Modern portfolio theory with Monte Carlo simulation:
@@ -135,6 +149,9 @@ Modern portfolio theory with Monte Carlo simulation:
 - `portfolio_risk` – risk metrics (VaR 95%, CVaR, Sortino, max drawdown, beta)
 - `portfolio_correlation` – correlation & covariance matrices, most/least correlated pairs
 
+### Performance
+- Parallel data fetching via ThreadPoolExecutor for multi-symbol portfolios
+
 ## Sentiment Analysis (sentiment.py)
 News-based sentiment scoring with English + Japanese keyword matching:
 
@@ -143,6 +160,86 @@ News-based sentiment scoring with English + Japanese keyword matching:
 - `sentiment_market` – batch sentiment for multiple stocks
 - `sentiment_combined` – combined TA (70%) + sentiment (30%) signal
 - `sentiment_screen` – screen stocks by sentiment threshold
+
+## Fundamental Financial Analysis (financial.py)
+Comprehensive financial analysis computed from raw statements:
+
+### Functions
+- `financial_health` – Altman Z-score (bankruptcy prediction), Piotroski F-score (0-9), liquidity ratios, leverage metrics, cash conversion cycle
+- `financial_growth` – YoY revenue/earnings growth, margin trends (gross/operating/net), free cash flow trends
+- `financial_valuation` – DCF valuation (projected FCF, terminal value, intrinsic value), relative valuation (P/E, EV/EBITDA, P/B)
+- `financial_peer_compare` – side-by-side multi-stock comparison with parallel fetching, ranked by ROE/ROA/margin
+- `financial_dividend` – dividend yield, payout ratio, CAGR, CF coverage, sustainability assessment
+- `financial_ratios_calc` – compute ratios from raw statements + DuPont decomposition (NPM × AT × EM = ROE)
+
+## ML Signal Generation (ml.py)
+Machine learning predictions using scikit-learn (optional dependency):
+
+### Functions
+- `ml_predict` – probability of price increase using Random Forest or Gradient Boosting (30+ TA features)
+- `ml_feature_importance` – rank TA indicators by predictive power with category breakdown
+- `ml_signal` – combined ML + TA signal (configurable weight blend, default 50/50)
+- `ml_batch_predict` – batch predictions for multiple symbols sorted by probability
+
+### Features (30+)
+Trend (SMA/EMA ratios), Momentum (RSI, MACD, Stochastic, ROC, Williams %R), Volatility (ATR, Bollinger %), Volume (ratios, OBV), Price Action (returns, gaps)
+
+## Options & Derivatives (options.py)
+Options analysis with pure Python Black-Scholes (no scipy dependency):
+
+### Functions
+- `options_chain` – calls & puts with strike, bid/ask, volume, OI, IV, summary
+- `options_greeks` – Delta, Gamma, Theta, Vega, Rho for all options at an expiry
+- `options_iv_surface` – IV surface data, skew summary, term structure
+- `options_unusual_activity` – high volume/OI ratio detection with alert levels
+- `options_put_call_ratio` – P/C ratio with sentiment classification (BEARISH/NEUTRAL/BULLISH)
+- `options_max_pain` – max pain strike calculation with pain-by-strike breakdown
+
+## Stock Report Generator (report.py)
+Unified reports aggregating all analysis modules in a single call:
+
+### Functions
+- `stock_report` – comprehensive report: overview + price + TA + candlestick + financial health + growth + valuation + dividend + sentiment + ML (all sections run in parallel, includes executive summary)
+- `stock_report_quick` – lightweight quick report: price summary + TA signal + key ratios (much faster)
+- `stock_report_compare` – side-by-side comparison for multiple stocks with rankings by return, TA score, F-score
+
+## Alert & Watchlist (alert.py)
+Stateless condition-based monitoring — evaluates at call time, designed for scheduled tasks:
+
+### Functions
+- `alert_check` – evaluate custom alert conditions for a symbol
+- `alert_price` – quick price-level alert (above/below thresholds)
+- `alert_ta` – 16 TA-based alerts: rsi_oversold, rsi_overbought, macd_bullish_cross, macd_bearish_cross, bb_squeeze, bb_breakout_upper, bb_breakout_lower, golden_cross, death_cross, volume_spike, price_above_sma, price_below_sma, supertrend_bullish, supertrend_bearish, new_high_52w, new_low_52w
+- `alert_fundamental` – fundamental alerts: P/E, dividend yield, ROE, D/E, Piotroski F-score thresholds
+- `alert_watchlist` – check multiple symbols against conditions in parallel
+- `alert_list_conditions` – list all available alert conditions
+
+## Sector & Market Analysis (market.py)
+Market-level analysis beyond individual stocks:
+
+### Functions
+- `market_sector_performance` – compare performance across sectors with ranking
+- `market_breadth` – advance/decline ratio, 52w new highs/lows, breadth signal (STRONG_BULLISH to STRONG_BEARISH)
+- `market_top_movers` – top N gainers and losers from a symbol universe
+- `market_regime` – detect bull/bear/sideways regime from index (SMA trend + momentum + volatility scoring)
+- `market_heatmap` – sector-grouped performance data for visualization
+
+## Custom Strategy Builder (strategy.py)
+Compose multiple conditions into custom screening strategies with AND/OR logic:
+
+### Condition Types (27 total)
+- **Price (5)**: price_above, price_below, return_above, return_below, volume_above_avg
+- **TA (15)**: rsi_below, rsi_above, rsi_between, macd_bullish, macd_bearish, price_above_sma, price_below_sma, bb_above_upper, bb_below_lower, supertrend_bullish, supertrend_bearish, ta_signal_buy, ta_signal_sell, ta_score_above, ta_score_below
+- **Fundamental (7)**: pe_below, pe_above, pb_below, dividend_yield_above, roe_above, debt_to_equity_below, f_score_above
+
+### Functions
+- `strategy_evaluate` – evaluate composed conditions against a single symbol (AND/OR logic)
+- `strategy_screen` – screen multiple symbols with custom strategy in parallel
+- `strategy_list_conditions` – list all condition types grouped by category
+
+### Performance
+- Per-symbol data cache prevents redundant API calls when multiple conditions use the same data
+- Parallel screening via ThreadPoolExecutor
 
 ## Infrastructure (logging.py + core.py)
 
@@ -160,11 +257,16 @@ News-based sentiment scoring with English + Japanese keyword matching:
 ### Caching
 - `_TTLCache(maxsize=128, ttl=300)` – LRU cache with 5-minute TTL
 - `cache_clear()` – clear all cached entries
-- Applied to `stock_history()` for now; can be extended to other data functions
+- `@with_cache` decorator applied to: `stock_history`, `company_overview`, `company_news`, `financial_ratio`, `fx_history`, `crypto_history`, `world_index_history`
 - Cache key = hash of (function_name, args, kwargs)
 
+### Parallel Data Fetching
+- `fetch_parallel(func, symbols, max_workers=8)` – generic parallel fetcher via ThreadPoolExecutor
+- `stock_history_batch()` – batch price history for multiple symbols
+- `company_overview_batch()` – batch company overview
+
 ## Test Suite
-- 10 test files, 401 tests (3 skipped for ta library compat)
+- 19 test files, 772 tests (3 skipped for ta library compat)
 - Overall coverage: 79%
-- Key module coverage: core 87%, backtest 88%, candlestick 91%, sentiment 97%, logging 98%
+- Key module coverage: core 87%, backtest 88%, candlestick 91%, sentiment 97%, logging 98%, financial 95%+
 - CI/CD: GitHub Actions with Python 3.10/3.11/3.12, ruff lint, pytest-cov (threshold 75%)
