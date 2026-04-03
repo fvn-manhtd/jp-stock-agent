@@ -1,0 +1,37 @@
+# MCPize Configuration
+# Docs: https://mcpize.com/docs/mcpize-yaml
+
+version: 1
+
+name: "JPStock Agent"
+slug: "jpstock-agent"
+
+runtime: python
+entry: "jpstock_agent/cli.py"
+
+build:
+  install: "pip install --no-cache-dir ."
+
+start:
+  type: stdio
+  command: "python -m jpstock_agent.cli"
+
+bridge:
+  mode: stdio
+
+credentials:
+  - name: "JQUANTS_API_KEY"
+    description: "API key for J-Quants (JPX official data, v2)."
+    docs_url: "https://jpx-jquants.com/"
+  - name: "JQUANTS_API_EMAIL"
+    description: "Email for J-Quants authentication (v1)."
+    docs_url: "https://jpx-jquants.com/"
+  - name: "JQUANTS_API_PASSWORD"
+    description: "Password for J-Quants authentication (v1)."
+    docs_url: "https://jpx-jquants.com/"
+  - name: "JQUANTS_REFRESH_TOKEN"
+    description: "Refresh token for J-Quants (v1)."
+    docs_url: "https://jpx-jquants.com/"
+  - name: "VNSTOCK_API_KEY"
+    description: "Optional API key for vnstock to increase rate limits."
+    docs_url: "https://vnstocks.com/"
