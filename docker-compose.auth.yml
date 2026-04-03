@@ -1,0 +1,12 @@
+version: "3.8"
+
+# Override: enable auth + rate limiting for commercial deployment.
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.auth.yml up
+
+services:
+  jpstock-agent:
+    environment:
+      - JPSTOCK_AUTH_ENABLED=true
+      - JPSTOCK_MASTER_KEY=${JPSTOCK_MASTER_KEY:-changeme}
+      - JPSTOCK_RATE_LIMIT_ENABLED=true
+      - JPSTOCK_BURST_PER_MINUTE=30

@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     jpstock_mcp_host: str = "0.0.0.0"
     jpstock_mcp_port: int = 8000
 
+    # Authentication
+    jpstock_auth_enabled: bool = False       # Set True to require API keys
+    jpstock_auth_key_file: str = ""          # Custom key store path (default ~/.jpstock/keys.json)
+    jpstock_master_key: str = ""             # Master admin key (bypasses rate limits)
+
+    # Rate limiting
+    jpstock_rate_limit_enabled: bool = True  # Rate limit even when auth is off
+    jpstock_burst_per_minute: int = 30       # Max calls per key per minute
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

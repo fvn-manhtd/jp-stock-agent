@@ -22,8 +22,12 @@ src/jpstock_agent/
   alert.py        – alert & watchlist (16 TA conditions, price/fundamental alerts, watchlist monitoring)
   market.py       – sector & market analysis (breadth, regime detection, top movers, heatmap)
   strategy.py     – custom strategy builder (27 composable conditions, AND/OR logic, screening)
-  server.py       – FastMCP tool definitions (103 tools)
-  cli.py          – Click CLI commands (88 commands + serve)
+  auth.py         – authentication & API key management (tier system, key store, access control)
+  ratelimit.py    – sliding-window rate limiter (daily + burst limits, per-key quotas, thread-safe)
+  middleware.py    – ASGI middleware for HTTP/SSE auth & rate limiting
+  usage.py        – persistent usage tracking & analytics (SQLite, revenue estimation)
+  server.py       – FastMCP tool definitions (111 tools)
+  cli.py          – Click CLI commands (99 commands + serve)
 ```
 
 ## Key Conventions
@@ -60,6 +64,11 @@ jpstock-agent serve             # Start MCP server (stdio)
 | `JQUANTS_API_PASSWORD` | *(empty)* | J-Quants login password (v1) |
 | `JQUANTS_REFRESH_TOKEN` | *(empty)* | J-Quants refresh token (v1 alternative) |
 | `VNSTOCK_API_KEY` | *(empty)* | vnstock API key (optional; raises rate limit from 20→60 req/min) |
+| `JPSTOCK_AUTH_ENABLED` | `false` | Set `true` to require API keys for all tool calls |
+| `JPSTOCK_AUTH_KEY_FILE` | *(empty)* | Custom key store path (default `~/.jpstock/keys.json`) |
+| `JPSTOCK_MASTER_KEY` | *(empty)* | Master admin key (bypasses auth + rate limits) |
+| `JPSTOCK_RATE_LIMIT_ENABLED` | `true` | Enable rate limiting (works even when auth is off) |
+| `JPSTOCK_BURST_PER_MINUTE` | `30` | Max calls per key per minute (burst cap) |
 
 ## J-Quants Auth Priority
 `JQUANTS_API_KEY` (v2 ClientV2) > `JQUANTS_REFRESH_TOKEN` (v1 Client) > email/password (v1 Client)
@@ -265,8 +274,84 @@ Compose multiple conditions into custom screening strategies with AND/OR logic:
 - `stock_history_batch()` – batch price history for multiple symbols
 - `company_overview_batch()` – batch company overview
 
+## Authentication & API Key Management (auth.py)
+Tier-based API key system for commercial MCP marketplace deployment.
+
+### Tiers
+| Tier | Daily Limit | Tools | Price |
+|------|------------|-------|-------|
+| **free** | 50 | basic (quotes, history, overview, FX, crypto) | $0 |
+| **pro** | 1,000 | all 105 tools | $9/mo |
+| **enterprise** | 5,000 | all + priority support | $19/mo |
+
+### API Key Format
+`jpsk_{tier}_{random_hex}` e.g. `jpsk_pro_a1b2c3d4e5f6`
+
+### Functions
+- `KeyStore.generate_key` – create new API key (raw key shown once, only hash stored)
+- `KeyStore.validate` – validate key, return tier/owner
+- `KeyStore.revoke` – deactivate a key
+- `KeyStore.list_keys` – list keys (hashes only)
+- `check_tool_access` – check if tier allows a specific tool
+- `get_daily_limit` – return daily call limit for a tier
+
+### Storage
+JSON file at `~/.jpstock/keys.json` (configurable). SHA-256 hashed keys.
+
+### CLI Commands
+`key-generate`, `key-list`, `key-revoke`, `key-validate`, `auth-tiers`
+
+## Rate Limiting (ratelimit.py)
+In-memory sliding-window rate limiter, thread-safe.
+
+### Features
+- **Daily window** (86,400s) – enforces per-tier daily limits
+- **Burst window** (60s) – prevents API abuse spikes (default 30/min)
+- Per-key custom limits via `set_limit()`
+- `peek()` – check quota without consuming a call
+- `usage()` – detailed stats (daily/minute used, remaining, utilization %)
+- `reset()` / `reset_all()` – clear state
+
+### Thread Safety
+All public methods acquire `threading.Lock` for concurrent FastMCP handlers.
+
+### Production Note
+For multi-process deployment, swap with Redis-backed implementation (same interface).
+
+## ASGI Middleware (middleware.py)
+Auth + rate limiting middleware for HTTP/SSE transports.
+
+### How It Works
+- **stdio transport**: No auth (local subprocess, user is owner)
+- **HTTP/SSE transport**: `AuthMiddleware` wraps the ASGI app
+- API key via `Authorization: Bearer <key>` or `X-API-Key` header
+- Returns `401` for missing/invalid keys, `429` for rate limit exceeded
+- Master key bypasses all checks
+- Injects `scope["auth"]` context for downstream use
+
+## Usage Tracking & Analytics (usage.py)
+SQLite-backed persistent usage recorder and analytics engine.
+
+### Storage
+Default: `~/.jpstock/usage.db` (WAL mode for concurrent writes).
+Single `calls` table with indexes on `(key_hash, date_str)`, `(tool, date_str)`, `(date_str)`.
+
+### Functions
+- `record` – log a tool call (key_hash, tier, tool, latency, status)
+- `daily_summary` – aggregate stats for a day (total calls, unique keys, by tier, top tools, error rate, avg latency)
+- `key_usage` – per-key breakdown over N days (daily counts, top tools, errors)
+- `tool_stats` – per-tool stats (call counts, avg latency, error rates)
+- `revenue_estimate` – MRR/ARR estimate from active keys per tier (free=$0, pro=$9, enterprise=$19)
+- `cleanup` – delete records older than N days
+
+### Thread Safety
+Each thread gets its own SQLite connection via thread-local storage.
+
+### CLI Commands
+`usage-daily`, `usage-key`, `usage-tools`, `usage-revenue`, `usage-cleanup`
+
 ## Test Suite
-- 19 test files, 772 tests (3 skipped for ta library compat)
+- 23 test files, 858 tests (3 skipped for ta library compat)
 - Overall coverage: 79%
 - Key module coverage: core 87%, backtest 88%, candlestick 91%, sentiment 97%, logging 98%, financial 95%+
 - CI/CD: GitHub Actions with Python 3.10/3.11/3.12, ruff lint, pytest-cov (threshold 75%)

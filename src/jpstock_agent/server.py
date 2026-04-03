@@ -4,6 +4,12 @@ Supports three transport modes:
   - stdio  (default) – for Claude Desktop, Cursor, etc.
   - sse    – Server-Sent Events over HTTP
   - http   – Standard HTTP
+
+Authentication & Rate Limiting
+------------------------------
+When ``JPSTOCK_AUTH_ENABLED=true``, every tool call requires a valid
+API key passed via the ``api_key`` parameter.  Rate limits are enforced
+per key according to the key's tier (free/pro/enterprise).
 """
 
 from __future__ import annotations
@@ -27,7 +33,9 @@ from . import (
     strategy,
     ta,
 )
+from .auth import get_key_store
 from .config import get_settings
+from .ratelimit import get_rate_limiter
 
 app = FastMCP(
     "JPStock Agent",
@@ -41,6 +49,100 @@ app = FastMCP(
         "For Vietnamese tickers, use 3-letter codes like 'ACB', 'VNM', 'VIC'."
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# Auth management tools (always accessible, no gate)
+# ---------------------------------------------------------------------------
+
+
+@app.tool()
+def auth_usage(api_key: str = "") -> str:
+    """Check your API key usage and remaining quota.
+
+    Args:
+        api_key: Your API key.
+    """
+    settings = get_settings()
+    if not settings.jpstock_auth_enabled:
+        return json.dumps({"message": "Auth is disabled on this server."})
+    if not api_key:
+        return json.dumps({"error": "Provide your api_key."})
+
+    store = get_key_store(settings.jpstock_auth_key_file or None)
+    result = store.validate(api_key)
+    if not result.authenticated:
+        return json.dumps({"error": result.error})
+
+    limiter = get_rate_limiter()
+    usage = limiter.usage(result.key_hash)
+    usage["tier"] = result.tier
+    usage["owner"] = result.owner
+    return json.dumps(usage, default=str)
+
+
+@app.tool()
+def auth_tiers() -> str:
+    """List available subscription tiers and their limits."""
+    from .auth import TIERS
+    return json.dumps(TIERS, default=str, ensure_ascii=False)
+
+
+@app.tool()
+def usage_daily(date: str | None = None) -> str:
+    """Get daily usage summary: total calls, unique keys, top tools.
+
+    Args:
+        date: Date in YYYY-MM-DD format. Defaults to today (UTC).
+    """
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    return json.dumps(tracker.daily_summary(date), default=str)
+
+
+@app.tool()
+def usage_key(api_key: str = "", days: int = 7) -> str:
+    """Get usage breakdown for a specific API key.
+
+    Args:
+        api_key: Your API key.
+        days: Lookback period in days (default 7).
+    """
+    if not api_key:
+        return json.dumps({"error": "Provide api_key."})
+    settings = get_settings()
+    store = get_key_store(settings.jpstock_auth_key_file or None)
+    result = store.validate(api_key)
+    if not result.authenticated:
+        return json.dumps({"error": result.error})
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    return json.dumps(tracker.key_usage(result.key_hash, days), default=str)
+
+
+@app.tool()
+def usage_tools(days: int = 7) -> str:
+    """Get per-tool usage stats: call counts, latency, error rates.
+
+    Args:
+        days: Lookback period in days (default 7).
+    """
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    return json.dumps(tracker.tool_stats(days), default=str)
+
+
+@app.tool()
+def usage_revenue(days: int = 30) -> str:
+    """Estimate monthly recurring revenue from active subscriptions.
+
+    Args:
+        days: Period to look back for active keys (default 30).
+    """
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    return json.dumps(tracker.revenue_estimate(days), default=str)
+
 
 # ---------------------------------------------------------------------------
 # Quote Tools
@@ -2013,7 +2115,11 @@ def strategy_list_conditions() -> str:
 
 
 def run_server():
-    """Start the MCP server with configured transport."""
+    """Start the MCP server with configured transport.
+
+    For HTTP/SSE transports, applies :class:`AuthMiddleware` when
+    ``JPSTOCK_AUTH_ENABLED=true`` or ``JPSTOCK_RATE_LIMIT_ENABLED=true``.
+    """
     settings = get_settings()
     transport = settings.jpstock_mcp_transport.lower()
 

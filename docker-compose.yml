@@ -5,12 +5,23 @@ services:
     build: .
     ports:
       - "8000:8000"
+    volumes:
+      - jpstock-data:/data/.jpstock
     environment:
       - JPSTOCK_MCP_TRANSPORT=sse
       - JPSTOCK_MCP_HOST=0.0.0.0
       - JPSTOCK_MCP_PORT=8000
       - JPSTOCK_DEFAULT_SOURCE=yfinance
-      # Uncomment and fill in for J-Quants support:
-      # - JQUANTS_API_EMAIL=your_email@example.com
-      # - JQUANTS_API_PASSWORD=your_password
+      - JPSTOCK_RATE_LIMIT_ENABLED=true
+      - JPSTOCK_BURST_PER_MINUTE=30
+      # Auth (uncomment to enable):
+      # - JPSTOCK_AUTH_ENABLED=true
+      # - JPSTOCK_MASTER_KEY=your_master_key_here
+      # J-Quants (uncomment for official JPX data):
+      # - JQUANTS_API_KEY=your_jquants_api_key
+      # vnstock (uncomment for higher rate limit):
+      # - VNSTOCK_API_KEY=your_vnstock_key
     restart: unless-stopped
+
+volumes:
+  jpstock-data:

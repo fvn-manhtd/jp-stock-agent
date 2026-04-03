@@ -1148,6 +1148,157 @@ def cli_strategy_conditions(fmt):
 
 
 # ---------------------------------------------------------------------------
+# API Key Management Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="key-generate")
+@click.option("--tier", "-t", default="free", help="Tier: free, pro, enterprise")
+@click.option("--owner", "-o", required=True, help="Owner email or identifier")
+@click.option("--key-file", default=None, help="Custom key store file path")
+def cli_key_generate(tier, owner, key_file):
+    """Generate a new API key."""
+    from .auth import get_key_store
+    store = get_key_store(key_file)
+    try:
+        raw_key = store.generate_key(tier, owner)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        return
+    click.echo("API Key generated successfully!")
+    click.echo(f"  Tier:  {tier}")
+    click.echo(f"  Owner: {owner}")
+    click.echo(f"  Key:   {raw_key}")
+    click.echo("")
+    click.echo("Save this key – it will NOT be shown again.")
+
+
+@cli.command(name="key-list")
+@click.option("--owner", "-o", default=None, help="Filter by owner")
+@click.option("--key-file", default=None, help="Custom key store file path")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_key_list(owner, key_file, fmt):
+    """List all stored API keys (hash only, not raw keys)."""
+    from .auth import get_key_store
+    store = get_key_store(key_file)
+    keys = store.list_keys(owner)
+    if not keys:
+        click.echo("No keys found.")
+        return
+    click.echo(_format_output(keys, fmt))
+
+
+@cli.command(name="key-revoke")
+@click.argument("api_key")
+@click.option("--key-file", default=None, help="Custom key store file path")
+def cli_key_revoke(api_key, key_file):
+    """Revoke (deactivate) an API key."""
+    from .auth import get_key_store
+    store = get_key_store(key_file)
+    if store.revoke(api_key):
+        click.echo("Key revoked successfully.")
+    else:
+        click.echo("Key not found.", err=True)
+
+
+@cli.command(name="key-validate")
+@click.argument("api_key")
+@click.option("--key-file", default=None, help="Custom key store file path")
+def cli_key_validate(api_key, key_file):
+    """Validate an API key and show its tier."""
+    from .auth import get_key_store
+    store = get_key_store(key_file)
+    result = store.validate(api_key)
+    if result.authenticated:
+        click.echo(f"Valid key – tier: {result.tier}, owner: {result.owner}")
+    else:
+        click.echo(f"Invalid: {result.error}", err=True)
+
+
+@cli.command(name="auth-tiers")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_auth_tiers(fmt):
+    """Show available subscription tiers and limits."""
+    from .auth import TIERS
+    rows = []
+    for name, info in TIERS.items():
+        rows.append({
+            "tier": name,
+            "display_name": info["display_name"],
+            "daily_limit": info["daily_limit"],
+            "tools": info["tools"],
+            "description": info["description"],
+        })
+    click.echo(_format_output(rows, fmt))
+
+
+# ---------------------------------------------------------------------------
+# Usage Analytics Commands
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="usage-daily")
+@click.option("--date", "-d", default=None, help="Date YYYY-MM-DD (default today UTC)")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_usage_daily(date, fmt):
+    """Daily usage summary: total calls, unique keys, top tools."""
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    data = tracker.daily_summary(date)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="usage-key")
+@click.argument("api_key")
+@click.option("--days", "-d", default=7, type=int, help="Lookback days (default 7)")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_usage_key(api_key, days, fmt):
+    """Usage breakdown for a specific API key."""
+    from .auth import get_key_store
+    from .usage import get_usage_tracker
+    store = get_key_store()
+    result = store.validate(api_key)
+    if not result.authenticated:
+        click.echo(f"Invalid key: {result.error}", err=True)
+        return
+    tracker = get_usage_tracker()
+    data = tracker.key_usage(result.key_hash, days)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="usage-tools")
+@click.option("--days", "-d", default=7, type=int, help="Lookback days (default 7)")
+@click.option("--format", "-f", "fmt", default="table", help="Output format: table or json")
+def cli_usage_tools(days, fmt):
+    """Per-tool usage stats: call counts, latency, error rates."""
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    data = tracker.tool_stats(days)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="usage-revenue")
+@click.option("--days", "-d", default=30, type=int, help="Lookback period (default 30)")
+@click.option("--format", "-f", "fmt", default="json", help="Output format: table or json")
+def cli_usage_revenue(days, fmt):
+    """Estimate monthly recurring revenue from active subscriptions."""
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    data = tracker.revenue_estimate(days)
+    click.echo(_format_output(data, fmt))
+
+
+@cli.command(name="usage-cleanup")
+@click.option("--keep-days", default=90, type=int, help="Keep last N days (default 90)")
+def cli_usage_cleanup(keep_days):
+    """Delete old usage records to save disk space."""
+    from .usage import get_usage_tracker
+    tracker = get_usage_tracker()
+    deleted = tracker.cleanup(keep_days)
+    click.echo(f"Deleted {deleted} records older than {keep_days} days.")
+
+
+# ---------------------------------------------------------------------------
 # Server Command
 # ---------------------------------------------------------------------------
 
